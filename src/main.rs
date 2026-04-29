@@ -1,3 +1,8 @@
+mod edit;
+mod error;
+mod parser;
+mod query;
+
 fn main() {
-    println!("Hello, world!");
+    println!("jqc");
 }
