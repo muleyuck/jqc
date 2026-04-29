@@ -316,6 +316,7 @@ dependencies = [
  "num-traits",
  "ryu",
  "self_cell",
+ "serde_core",
 ]
 
 [[package]]
@@ -397,6 +398,10 @@ name = "jsonc-parser"
 version = "0.32.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "8c2e5dea04f54739ca5694ee06e4448ffda065a55b3427d2b131bd5ea697ea2c"
+dependencies = [
+ "serde",
+ "serde_json",
+]
 
 [[package]]
 name = "leb128fmt"
@@ -632,6 +637,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "9a8e94ea7f378bd32cbbd37198a4a91436180c5bb472411e48b5ec2e2124ae9e"
 dependencies = [
  "serde_core",
+ "serde_derive",
 ]
 
 [[package]]
