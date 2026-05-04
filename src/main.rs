@@ -1,5 +1,6 @@
 mod edit;
 mod error;
+mod jaq;
 mod parser;
 mod query;
 
