@@ -17,8 +17,8 @@ jaq-std = "3.0.0"
 clap = { version = "4.6.1", features = ["derive"] }
 serde_json = "1.0.149"
 anyhow = "1.0.102"
+tempfile = "3.27.0"
 
 [dev-dependencies]
 assert_cmd = "2.2.1"
 predicates = "3.1.4"
-tempfile = "3.27.0"
