@@ -177,6 +177,25 @@ pub fn del(text: &str, path_expr: &str) -> Result<String> {
     Ok(format!("{root}"))
 }
 
+/// Append `new_value_str` (JSON-encoded) to the array at `path_expr`.
+/// Returns the modified JSONC text with all comments preserved.
+pub fn push(text: &str, path_expr: &str, new_value_str: &str) -> Result<String> {
+    let new_val: serde_json::Value = serde_json::from_str(new_value_str)
+        .map_err(|e| anyhow!("new value is not valid JSON: {e}"))?;
+    let cst_val = to_cst_input(new_val);
+
+    let segments = resolve_path(path_expr, text)?;
+    let root = parse_cst(text)?;
+    let target = navigate(&root, &segments)?;
+
+    let arr = target
+        .as_array()
+        .ok_or_else(|| anyhow!("value at {path_expr:?} is not an array"))?;
+
+    arr.append(cst_val);
+    Ok(format!("{root}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -368,5 +387,57 @@ mod tests {
     #[test]
     fn test_del_nested_missing_key_error() {
         assert!(del(r#"{"server": {"port": 3000}}"#, ".server.nonexistent").is_err());
+    }
+
+    #[test]
+    fn test_push_string_appended_at_end() {
+        let input = r#"{"tags": ["a", "b"]}"#;
+        let result = push(input, ".tags", "\"c\"").unwrap();
+        // Verify order: "c" must appear after "b"
+        let pos_b = result.find("\"b\"").unwrap();
+        let pos_c = result.find("\"c\"").unwrap();
+        assert!(pos_c > pos_b, "new element must be appended after existing elements");
+    }
+
+    #[test]
+    fn test_push_to_empty_array() {
+        let input = r#"{"tags": []}"#;
+        let result = push(input, ".tags", "\"x\"").unwrap();
+        assert!(result.contains("\"x\""));
+    }
+
+    #[test]
+    fn test_push_object() {
+        let input = r#"{"items": []}"#;
+        let result = push(input, ".items", r#"{"id": 1}"#).unwrap();
+        assert!(result.contains("\"id\""));
+        assert!(result.contains("1"));
+    }
+
+    #[test]
+    fn test_push_nested_array() {
+        let input = r#"{"server": {"tags": ["a"]}}"#;
+        let result = push(input, ".server.tags", "\"b\"").unwrap();
+        let pos_a = result.find("\"a\"").unwrap();
+        let pos_b = result.find("\"b\"").unwrap();
+        assert!(pos_b > pos_a, "new element must be appended after existing elements");
+    }
+
+    #[test]
+    fn test_push_preserves_comments() {
+        let input = "{\n  // plugin list\n  \"plugins\": [\"a\"]\n}";
+        let result = push(input, ".plugins", "\"b\"").unwrap();
+        assert!(result.contains("// plugin list"), "comment must be preserved");
+        assert!(result.contains("\"b\""));
+    }
+
+    #[test]
+    fn test_push_non_array_error() {
+        assert!(push(r#"{"port": 3000}"#, ".port", "1").is_err());
+    }
+
+    #[test]
+    fn test_push_invalid_json_error() {
+        assert!(push(r#"{"tags": []}"#, ".tags", "not-json").is_err());
     }
 }
