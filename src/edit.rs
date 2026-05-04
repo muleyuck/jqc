@@ -1,6 +1,6 @@
 use anyhow::{anyhow, bail, Result};
 use jaq_json::Val;
-use jsonc_parser::cst::{CstNode, CstRootNode};
+use jsonc_parser::cst::{CstContainerNode, CstInputValue, CstLeafNode, CstNode, CstRootNode};
 use jsonc_parser::ParseOptions;
 
 use crate::jaq;
@@ -96,6 +96,56 @@ fn parse_cst(text: &str) -> Result<CstRootNode> {
         .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))
 }
 
+/// Convert a `serde_json::Value` to `CstInputValue` for CST mutations.
+fn to_cst_input(v: serde_json::Value) -> CstInputValue {
+    match v {
+        serde_json::Value::Null => CstInputValue::Null,
+        serde_json::Value::Bool(b) => CstInputValue::Bool(b),
+        serde_json::Value::Number(n) => CstInputValue::Number(n.to_string()),
+        serde_json::Value::String(s) => CstInputValue::String(s),
+        serde_json::Value::Array(arr) => {
+            CstInputValue::Array(arr.into_iter().map(to_cst_input).collect())
+        }
+        serde_json::Value::Object(obj) => {
+            CstInputValue::Object(obj.into_iter().map(|(k, v)| (k, to_cst_input(v))).collect())
+        }
+    }
+}
+
+/// Replace a CST node in-place with `value`.
+fn replace_cst_node(node: CstNode, value: CstInputValue) -> Result<()> {
+    match node {
+        CstNode::Leaf(leaf) => match leaf {
+            CstLeafNode::StringLit(n) => { n.replace_with(value); }
+            CstLeafNode::NumberLit(n) => { n.replace_with(value); }
+            CstLeafNode::BooleanLit(n) => { n.replace_with(value); }
+            CstLeafNode::NullKeyword(n) => { n.replace_with(value); }
+            CstLeafNode::WordLit(n) => { n.replace_with(value); }
+            other => bail!("cannot replace trivia node: {other}"),
+        }
+        CstNode::Container(container) => match container {
+            CstContainerNode::Object(n) => { n.replace_with(value); }
+            CstContainerNode::Array(n) => { n.replace_with(value); }
+            other => bail!("cannot replace root or object property node: {other}"),
+        }
+    }
+    Ok(())
+}
+
+/// Replace the value at `path_expr` with `new_value_str` (JSON-encoded).
+/// Returns the modified JSONC text with all comments preserved.
+pub fn set(text: &str, path_expr: &str, new_value_str: &str) -> Result<String> {
+    let new_val: serde_json::Value = serde_json::from_str(new_value_str)
+        .map_err(|e| anyhow!("new value is not valid JSON: {e}"))?;
+    let cst_val = to_cst_input(new_val);
+
+    let segments = resolve_path(path_expr, text)?;
+    let root = parse_cst(text)?;
+    let target = navigate(&root, &segments)?;
+    replace_cst_node(target, cst_val)?;
+    Ok(format!("{root}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -175,5 +225,47 @@ mod tests {
         let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
         let node = navigate(&root, &[]).unwrap();
         assert!(node.as_object().is_some());
+    }
+
+    #[test]
+    fn test_set_number() {
+        let input = r#"{"port": 3000}"#;
+        let result = set(input, ".port", "8080").unwrap();
+        assert_eq!(result, r#"{"port": 8080}"#);
+    }
+
+    #[test]
+    fn test_set_string() {
+        let input = r#"{"host": "localhost"}"#;
+        let result = set(input, ".host", "\"production.example.com\"").unwrap();
+        assert_eq!(result, r#"{"host": "production.example.com"}"#);
+    }
+
+    #[test]
+    fn test_set_bool() {
+        let input = r#"{"debug": true}"#;
+        let result = set(input, ".debug", "false").unwrap();
+        assert_eq!(result, r#"{"debug": false}"#);
+    }
+
+    #[test]
+    fn test_set_nested_preserves_comments() {
+        let input = "{\n  // server config\n  \"server\": {\"port\": 3000}\n}";
+        let result = set(input, ".server.port", "8080").unwrap();
+        assert!(result.contains("// server config"), "comment must be preserved");
+        assert!(result.contains("8080"));
+        assert!(!result.contains("3000"));
+    }
+
+    #[test]
+    fn test_set_array_element() {
+        let input = r#"{"tags": ["a", "b", "c"]}"#;
+        let result = set(input, ".tags[1]", "\"x\"").unwrap();
+        assert_eq!(result, r#"{"tags": ["a", "x", "c"]}"#);
+    }
+
+    #[test]
+    fn test_set_invalid_json_error() {
+        assert!(set(r#"{"port": 3000}"#, ".port", "not-json").is_err());
     }
 }
