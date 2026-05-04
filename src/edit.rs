@@ -1,5 +1,7 @@
 use anyhow::{anyhow, bail, Result};
 use jaq_json::Val;
+use jsonc_parser::cst::{CstNode, CstRootNode};
+use jsonc_parser::ParseOptions;
 
 use crate::jaq;
 
@@ -55,6 +57,45 @@ pub fn resolve_path(path_expr: &str, text: &str) -> Result<Vec<PathSegment>> {
         .collect()
 }
 
+/// Navigate the CST from the root to the value node indicated by `segments`.
+pub fn navigate(root: &CstRootNode, segments: &[PathSegment]) -> Result<CstNode> {
+    let mut current: CstNode = root
+        .value()
+        .ok_or_else(|| anyhow!("JSONC input is empty"))?;
+
+    for (i, seg) in segments.iter().enumerate() {
+        match seg {
+            PathSegment::Key(key) => {
+                let obj = current
+                    .as_object()
+                    .ok_or_else(|| anyhow!("expected object at segment {i} (key={key:?}), got: {current}"))?;
+                current = obj
+                    .get(key)
+                    .ok_or_else(|| anyhow!("key {key:?} not found"))?
+                    .value()
+                    .ok_or_else(|| anyhow!("key {key:?} has no value"))?;
+            }
+            PathSegment::Index(idx) => {
+                let arr = current
+                    .as_array()
+                    .ok_or_else(|| anyhow!("expected array at segment {i} (index={idx}), got: {current}"))?;
+                let elements = arr.elements();
+                current = elements
+                    .get(*idx)
+                    .ok_or_else(|| anyhow!("array index {idx} out of bounds (len={})", elements.len()))?
+                    .clone();
+            }
+        }
+    }
+    Ok(current)
+}
+
+/// Parse `text` as JSONC and return the root node for CST-based mutations.
+fn parse_cst(text: &str) -> Result<CstRootNode> {
+    CstRootNode::parse(text, &ParseOptions::default())
+        .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -86,5 +127,53 @@ mod tests {
     #[test]
     fn test_resolve_multi_match_error() {
         assert!(resolve_path(".tags[]", SAMPLE).is_err());
+    }
+
+    #[test]
+    fn test_navigate_array_index() {
+        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let segs = vec![PathSegment::Key("tags".into()), PathSegment::Index(1)];
+        let node = navigate(&root, &segs).unwrap();
+        assert_eq!(node.to_string(), "\"b\"");
+    }
+
+    #[test]
+    fn test_navigate_same_key_different_levels() {
+        // Ensures navigation is step-by-step and does not pick up the top-level "port"
+        let input = r#"{"port": 80, "server": {"port": 3000}}"#;
+        let root = CstRootNode::parse(input, &jsonc_parser::ParseOptions::default()).unwrap();
+        let segs = vec![PathSegment::Key("server".into()), PathSegment::Key("port".into())];
+        let node = navigate(&root, &segs).unwrap();
+        assert_eq!(node.to_string(), "3000");
+    }
+
+    #[test]
+    fn test_navigate_key_not_found_error() {
+        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let segs = vec![PathSegment::Key("server".into()), PathSegment::Key("nonexistent".into())];
+        assert!(navigate(&root, &segs).is_err());
+    }
+
+    #[test]
+    fn test_navigate_type_mismatch_error() {
+        // "tags" is an array; navigating into it with a Key segment must fail
+        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let segs = vec![PathSegment::Key("tags".into()), PathSegment::Key("foo".into())];
+        assert!(navigate(&root, &segs).is_err());
+    }
+
+    #[test]
+    fn test_navigate_index_out_of_bounds_error() {
+        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let segs = vec![PathSegment::Key("tags".into()), PathSegment::Index(99)];
+        assert!(navigate(&root, &segs).is_err());
+    }
+
+    #[test]
+    fn test_navigate_empty_segments() {
+        // Empty path returns the root value itself
+        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let node = navigate(&root, &[]).unwrap();
+        assert!(node.as_object().is_some());
     }
 }
