@@ -146,6 +146,37 @@ pub fn set(text: &str, path_expr: &str, new_value_str: &str) -> Result<String> {
     Ok(format!("{root}"))
 }
 
+/// Delete the object property at `path_expr`.
+/// The last segment must be a key (array element deletion is not supported).
+/// Returns the modified JSONC text with all comments preserved.
+pub fn del(text: &str, path_expr: &str) -> Result<String> {
+    let segments = resolve_path(path_expr, text)?;
+
+    let last = segments.last().ok_or_else(|| anyhow!("path is empty"))?;
+    let PathSegment::Key(key) = last else {
+        bail!("del only supports object key paths; last segment must be a key, not an index");
+    };
+
+    let root = parse_cst(text)?;
+
+    let parent_node = if segments.len() == 1 {
+        root.value().ok_or_else(|| anyhow!("JSONC input is empty"))?
+    } else {
+        navigate(&root, &segments[..segments.len() - 1])?
+    };
+
+    let obj = parent_node
+        .as_object()
+        .ok_or_else(|| anyhow!("parent of key {key:?} is not an object"))?;
+
+    let prop = obj
+        .get(key)
+        .ok_or_else(|| anyhow!("key {key:?} not found"))?;
+
+    prop.remove();
+    Ok(format!("{root}"))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -267,5 +298,75 @@ mod tests {
     #[test]
     fn test_set_invalid_json_error() {
         assert!(set(r#"{"port": 3000}"#, ".port", "not-json").is_err());
+    }
+
+    #[test]
+    fn test_del_key() {
+        let input = r#"{"host": "localhost", "port": 3000}"#;
+        let result = del(input, ".port").unwrap();
+        assert!(!result.contains("port"));
+        assert!(result.contains("localhost"));
+    }
+
+    #[test]
+    fn test_del_nested_key() {
+        let input = r#"{"server": {"host": "localhost", "port": 3000}}"#;
+        let result = del(input, ".server.port").unwrap();
+        assert!(!result.contains("3000"));
+        assert!(result.contains("localhost"));
+    }
+
+    #[test]
+    fn test_del_preserves_comments() {
+        let input = "{\n  // keep this\n  \"host\": \"localhost\",\n  \"port\": 3000\n}";
+        let result = del(input, ".port").unwrap();
+        assert!(result.contains("// keep this"), "comment must be preserved");
+        assert!(!result.contains("3000"));
+    }
+
+    #[test]
+    fn test_del_only_key_remaining() {
+        // Deleting the only property should leave an empty object
+        let input = r#"{"port": 3000}"#;
+        let result = del(input, ".port").unwrap();
+        assert!(!result.contains("port"));
+        assert!(!result.contains("3000"));
+    }
+
+    #[test]
+    fn test_del_first_property() {
+        let input = r#"{"host": "localhost", "port": 3000}"#;
+        let result = del(input, ".host").unwrap();
+        assert!(!result.contains("host"));
+        assert!(!result.contains("localhost"));
+        assert!(result.contains("3000"));
+        // No stray leading comma
+        assert!(!result.contains(", \"port\""), "no leading comma before remaining key");
+    }
+
+    #[test]
+    fn test_del_middle_property() {
+        let input = r#"{"a": 1, "b": 2, "c": 3}"#;
+        let result = del(input, ".b").unwrap();
+        assert!(!result.contains("\"b\""));
+        assert!(result.contains("\"a\""));
+        assert!(result.contains("\"c\""));
+        // No double comma
+        assert!(!result.contains(",,"));
+    }
+
+    #[test]
+    fn test_del_index_path_error() {
+        assert!(del(r#"{"tags": ["a", "b"]}"#, ".tags[0]").is_err());
+    }
+
+    #[test]
+    fn test_del_missing_key_error() {
+        assert!(del(r#"{"port": 3000}"#, ".nonexistent").is_err());
+    }
+
+    #[test]
+    fn test_del_nested_missing_key_error() {
+        assert!(del(r#"{"server": {"port": 3000}}"#, ".server.nonexistent").is_err());
     }
 }
