@@ -1,0 +1,13 @@
+{
+  // Editor
+  "editor.formatOnSave": true,
+  "editor.tabSize": 2,
+  "editor.fontSize": 14,
+  // Terminal
+  "terminal.integrated.fontSize": 13,
+  /* Formatter */
+  "editor.defaultFormatter": "esbenp.prettier-vscode",
+  "[typescript]": {
+    "editor.defaultFormatter": "biomejs.biome"
+  }
+}
