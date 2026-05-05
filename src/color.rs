@@ -1,17 +1,32 @@
-/// ANSI color codes for JSON token types, matching jq's default palette.
-/// Order: null, false, true, numbers, strings, arrays, objects, object-keys
-const DEFAULT_COLORS: [&str; 8] = [
-    "1;30", // null       — bold dark gray
-    "0;39", // false      — default
-    "0;39", // true       — default
-    "0;39", // numbers    — default
-    "0;32", // strings    — green
-    "1;39", // arrays     — bold
-    "1;39", // objects    — bold
-    "34",   // object-keys — blue
+/// ANSI color codes for JSONC token types.
+/// Order: null, false, true, numbers, strings, arrays, objects, object-keys, comments
+/// Configurable via JQC_COLORS environment variable (colon-separated, 9 fields).
+const DEFAULT_COLORS: [&str; 9] = [
+    "1;30", // null         — bold dark gray
+    "0;39", // false        — default
+    "0;39", // true         — default
+    "0;39", // numbers      — default
+    "0;32", // strings      — green
+    "1;39", // arrays       — bold
+    "1;39", // objects      — bold
+    "34",   // object-keys  — blue
+    "0;90", // comments     — dark gray (jqc-specific; jq has no comments)
 ];
 
-/// Resolved palette after applying `JQ_COLORS` overrides.
+/// JSON/JSONC token kinds used to look up colors from the palette.
+pub enum TokenKind {
+    Null,
+    BoolFalse,
+    BoolTrue,
+    Number,
+    StringValue,
+    ObjectKey,
+    ArrayBracket,
+    ObjectBrace,
+    Comment,
+}
+
+/// Resolved palette after applying `JQC_COLORS` overrides.
 pub struct Palette {
     null: String,
     bool_false: String,
@@ -21,6 +36,7 @@ pub struct Palette {
     array: String,
     object: String,
     key: String,
+    comment: String,
 }
 
 impl Default for Palette {
@@ -34,27 +50,28 @@ impl Default for Palette {
             array:      DEFAULT_COLORS[5].to_string(),
             object:     DEFAULT_COLORS[6].to_string(),
             key:        DEFAULT_COLORS[7].to_string(),
+            comment:    DEFAULT_COLORS[8].to_string(),
         }
     }
 }
 
 impl Palette {
-    /// Parse `JQ_COLORS` environment variable and override defaults.
-    /// Format: "null:false:true:number:string:array:object:key" (ANSI partial escapes)
+    /// Parse `JQC_COLORS` environment variable and override defaults.
+    /// Format: "null:false:true:number:string:array:object:key:comment" (ANSI partial escapes, 9 fields)
     pub fn from_env() -> Self {
-        match std::env::var("JQ_COLORS") {
-            Ok(val) => Self::from_jq_colors(&val),
+        match std::env::var("JQC_COLORS") {
+            Ok(val) => Self::from_jqc_colors(&val),
             Err(_) => Self::default(),
         }
     }
 
-    /// Parse a `JQ_COLORS`-formatted string (colon-separated, 8 fields).
-    fn from_jq_colors(s: &str) -> Self {
+    /// Parse a `JQC_COLORS`-formatted string (colon-separated, 9 fields).
+    fn from_jqc_colors(s: &str) -> Self {
         let mut p = Palette::default();
-        let fields: [&mut String; 8] = [
+        let fields: [&mut String; 9] = [
             &mut p.null, &mut p.bool_false, &mut p.bool_true,
             &mut p.number, &mut p.string, &mut p.array,
-            &mut p.object, &mut p.key,
+            &mut p.object, &mut p.key, &mut p.comment,
         ];
         for (field, part) in fields.into_iter().zip(s.split(':')) {
             if !part.is_empty() {
@@ -64,73 +81,146 @@ impl Palette {
         p
     }
 
-    fn paint(&self, code: &str, text: &str) -> String {
+    /// Apply ANSI color for the given token kind. Single source of truth for all colorization.
+    pub fn paint_token(&self, kind: TokenKind, text: &str) -> String {
+        let code = match kind {
+            TokenKind::Null        => &self.null,
+            TokenKind::BoolFalse   => &self.bool_false,
+            TokenKind::BoolTrue    => &self.bool_true,
+            TokenKind::Number      => &self.number,
+            TokenKind::StringValue => &self.string,
+            TokenKind::ObjectKey   => &self.key,
+            TokenKind::ArrayBracket => &self.array,
+            TokenKind::ObjectBrace  => &self.object,
+            TokenKind::Comment     => &self.comment,
+        };
         format!("\x1b[{code}m{text}\x1b[0m")
     }
+
 }
 
-/// Colorize a `serde_json::Value` into a pretty-printed string with ANSI codes.
-pub fn colorize(value: &serde_json::Value, indent: usize, palette: &Palette) -> String {
-    match value {
-        serde_json::Value::Null => palette.paint(&palette.null, "null"),
-        serde_json::Value::Bool(false) => palette.paint(&palette.bool_false, "false"),
-        serde_json::Value::Bool(true)  => palette.paint(&palette.bool_true, "true"),
-        serde_json::Value::Number(n)   => palette.paint(&palette.number, &n.to_string()),
-        serde_json::Value::String(s)   => {
-            palette.paint(&palette.string, &format!("\"{}\"", s.replace('\\', "\\\\").replace('"', "\\\"")))
+/// Tracks whether the next string token is an object key or a value.
+enum Ctx { ObjKey, ObjVal, Arr }
+
+/// Colorize raw JSONC source text with ANSI codes, preserving comments and whitespace.
+///
+/// Tokenizes byte-by-byte. Safe for UTF-8 because all JSONC structural bytes are ASCII,
+/// and multi-byte UTF-8 sequences never share byte values with ASCII.
+pub fn colorize_jsonc(text: &str, palette: &Palette) -> String {
+    let bytes = text.as_bytes();
+    let len = bytes.len();
+    let mut out = String::with_capacity(len * 2);
+    let mut i = 0;
+    // Stack tracks nesting context to distinguish object keys from string values.
+    let mut stack: Vec<Ctx> = Vec::new();
+
+    while i < len {
+        // Whitespace — pass through unchanged (preserves original indentation)
+        if bytes[i].is_ascii_whitespace() {
+            out.push(bytes[i] as char);
+            i += 1;
+            continue;
         }
-        serde_json::Value::Array(arr) => {
-            if arr.is_empty() {
-                return palette.paint(&palette.array, "[]");
+
+        // Line comment: // … \n
+        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
+            let start = i;
+            while i < len && bytes[i] != b'\n' { i += 1; }
+            out.push_str(&palette.paint_token(TokenKind::Comment, &text[start..i]));
+            continue;
+        }
+
+        // Block comment: /* … */
+        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
+            let start = i;
+            i += 2;
+            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') { i += 1; }
+            if i + 1 < len { i += 2; } // consume */
+            out.push_str(&palette.paint_token(TokenKind::Comment, &text[start..i]));
+            continue;
+        }
+
+        // String literal
+        if bytes[i] == b'"' {
+            let start = i;
+            i += 1;
+            while i < len {
+                if bytes[i] == b'\\' { i += 2; continue; } // skip escape sequence
+                if bytes[i] == b'"' { i += 1; break; }
+                i += 1;
             }
-            let inner_indent = " ".repeat((indent + 1) * 2);
-            let close_indent = " ".repeat(indent * 2);
-            let items: Vec<String> = arr
-                .iter()
-                .map(|v| format!("{}{}", inner_indent, colorize(v, indent + 1, palette)))
-                .collect();
-            format!(
-                "{}\n{}\n{}{}",
-                palette.paint(&palette.array, "["),
-                items.join(",\n"),
-                close_indent,
-                palette.paint(&palette.array, "]"),
-            )
-        }
-        serde_json::Value::Object(map) => {
-            if map.is_empty() {
-                return palette.paint(&palette.object, "{}");
+            let s = &text[start..i];
+            // Paint as key when the current object context expects a key; otherwise as string.
+            match stack.last() {
+                Some(Ctx::ObjKey) => {
+                    out.push_str(&palette.paint_token(TokenKind::ObjectKey, s));
+                    *stack.last_mut().unwrap() = Ctx::ObjVal;
+                }
+                _ => out.push_str(&palette.paint_token(TokenKind::StringValue, s)),
             }
-            let inner_indent = " ".repeat((indent + 1) * 2);
-            let close_indent = " ".repeat(indent * 2);
-            let items: Vec<String> = map
-                .iter()
-                .map(|(k, v)| {
-                    let key = palette.paint(&palette.key, &format!("\"{}\"", k));
-                    let val = colorize(v, indent + 1, palette);
-                    format!("{}{}: {}", inner_indent, key, val)
-                })
-                .collect();
-            format!(
-                "{}\n{}\n{}{}",
-                palette.paint(&palette.object, "{"),
-                items.join(",\n"),
-                close_indent,
-                palette.paint(&palette.object, "}"),
-            )
+            continue;
         }
+
+        // Number: starts with '-' or a digit
+        if bytes[i].is_ascii_digit() || bytes[i] == b'-' {
+            let start = i;
+            i += 1;
+            while i < len && matches!(bytes[i], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-') {
+                i += 1;
+            }
+            out.push_str(&palette.paint_token(TokenKind::Number, &text[start..i]));
+            continue;
+        }
+
+        // Keywords: true / false / null
+        if bytes[i].is_ascii_alphabetic() {
+            let start = i;
+            while i < len && bytes[i].is_ascii_alphabetic() { i += 1; }
+            let word = &text[start..i];
+            out.push_str(&match word {
+                "null"  => palette.paint_token(TokenKind::Null, word),
+                "false" => palette.paint_token(TokenKind::BoolFalse, word),
+                "true"  => palette.paint_token(TokenKind::BoolTrue, word),
+                _       => word.to_string(),
+            });
+            continue;
+        }
+
+        // Structural characters
+        match bytes[i] {
+            b'{' => { out.push_str(&palette.paint_token(TokenKind::ObjectBrace,   "{")); stack.push(Ctx::ObjKey); }
+            b'}' => { out.push_str(&palette.paint_token(TokenKind::ObjectBrace,   "}")); stack.pop(); }
+            b'[' => { out.push_str(&palette.paint_token(TokenKind::ArrayBracket,  "[")); stack.push(Ctx::Arr); }
+            b']' => { out.push_str(&palette.paint_token(TokenKind::ArrayBracket,  "]")); stack.pop(); }
+            b':' => out.push(':'),
+            b',' => {
+                out.push(',');
+                // After ',' inside an object, the next string is a key again.
+                if let Some(Ctx::ObjVal) = stack.last() {
+                    *stack.last_mut().unwrap() = Ctx::ObjKey;
+                }
+            }
+            _ => out.push(bytes[i] as char),
+        }
+        i += 1;
     }
+
+    out
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use serde_json::json;
+
+    fn colorize_value(v: &serde_json::Value, p: &Palette) -> String {
+        let pretty = serde_json::to_string_pretty(v).unwrap();
+        colorize_jsonc(&pretty, p)
+    }
 
     #[test]
     fn test_colorize_null() {
         let p = Palette::default();
-        let out = colorize(&json!(null), 0, &p);
+        let out = colorize_value(&serde_json::Value::Null, &p);
         assert!(out.contains("null"), "got: {out}");
         assert!(out.contains("\x1b["), "no ANSI code: {out}");
     }
@@ -138,21 +228,21 @@ mod tests {
     #[test]
     fn test_colorize_string() {
         let p = Palette::default();
-        let out = colorize(&json!("hello"), 0, &p);
+        let out = colorize_value(&serde_json::json!("hello"), &p);
         assert!(out.contains("\"hello\""), "got: {out}");
     }
 
     #[test]
     fn test_colorize_number() {
         let p = Palette::default();
-        let out = colorize(&json!(42), 0, &p);
+        let out = colorize_value(&serde_json::json!(42), &p);
         assert!(out.contains("42"), "got: {out}");
     }
 
     #[test]
     fn test_colorize_object_has_key_color() {
         let p = Palette::default();
-        let out = colorize(&json!({"port": 3000}), 0, &p);
+        let out = colorize_value(&serde_json::json!({"port": 3000}), &p);
         assert!(out.contains("\"port\""), "got: {out}");
         assert!(out.contains("3000"), "got: {out}");
     }
@@ -160,22 +250,65 @@ mod tests {
     #[test]
     fn test_colorize_array() {
         let p = Palette::default();
-        let out = colorize(&json!([1, 2]), 0, &p);
+        let out = colorize_value(&serde_json::json!([1, 2]), &p);
         assert!(out.contains("1"), "got: {out}");
         assert!(out.contains("2"), "got: {out}");
     }
 
     #[test]
-    fn test_jq_colors_override() {
-        let p = Palette::from_jq_colors("0;31:::::::");
+    fn test_jqc_colors_override() {
+        let p = Palette::from_jqc_colors("0;31::::::::");
         assert_eq!(p.null, "0;31");
         assert_eq!(p.string, DEFAULT_COLORS[4]);
     }
 
     #[test]
-    fn test_jq_colors_partial() {
-        let p = Palette::from_jq_colors("::::0;33:::");
+    fn test_jqc_colors_partial() {
+        let p = Palette::from_jqc_colors("::::0;33::::");
         assert_eq!(p.string, "0;33");
         assert_eq!(p.null, DEFAULT_COLORS[0]);
+    }
+
+    #[test]
+    fn test_jqc_colors_comment() {
+        // 9th field overrides comment color
+        let p = Palette::from_jqc_colors("::::::::0;31");
+        assert_eq!(p.comment, "0;31");
+        assert_eq!(p.null, DEFAULT_COLORS[0]);
+    }
+
+    #[test]
+    fn test_colorize_jsonc_line_comment() {
+        let p = Palette::default();
+        let out = colorize_jsonc("{ // comment\n\"port\": 3000 }", &p);
+        assert!(out.contains("// comment"), "got: {out}");
+        assert!(out.contains("\x1b["), "no ANSI code: {out}");
+    }
+
+    #[test]
+    fn test_colorize_jsonc_block_comment() {
+        let p = Palette::default();
+        let out = colorize_jsonc("{ /* hi */ \"port\": 3000 }", &p);
+        assert!(out.contains("/* hi */"), "got: {out}");
+    }
+
+    #[test]
+    fn test_colorize_jsonc_key_differs_from_string_value() {
+        let p = Palette::default();
+        let out = colorize_jsonc(r#"{"host": "localhost"}"#, &p);
+        // key uses DEFAULT_COLORS[7] (blue=34), value uses DEFAULT_COLORS[4] (green=0;32)
+        let key_colored = format!("\x1b[{}m\"host\"\x1b[0m", DEFAULT_COLORS[7]);
+        let val_colored = format!("\x1b[{}m\"localhost\"\x1b[0m", DEFAULT_COLORS[4]);
+        assert!(out.contains(&key_colored), "key color missing: {out}");
+        assert!(out.contains(&val_colored), "string value color missing: {out}");
+    }
+
+    #[test]
+    fn test_colorize_jsonc_preserves_whitespace() {
+        let p = Palette::default();
+        let input = "{\n  \"port\": 3000\n}";
+        let out = colorize_jsonc(input, &p);
+        assert!(out.contains('\n'), "newlines lost");
+        assert!(out.contains("  "), "indentation lost");
     }
 }

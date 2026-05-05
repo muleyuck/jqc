@@ -520,3 +520,67 @@ fn no_filter_defaults_to_identity() {
         .success()
         .stdout(contains("\"port\""));
 }
+
+// ---------------------------------------------------------------------------
+// fmt
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fmt_preserves_comments() {
+    let out = jqc()
+        .args(["fmt", &fixture("config.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(stdout.contains("// Server settings"), "line comment lost: {stdout}");
+    assert!(stdout.contains("// default port"), "inline comment lost: {stdout}");
+    assert!(stdout.contains("/* Feature flags */"), "block comment lost: {stdout}");
+    assert!(stdout.contains("\"port\""), "field lost: {stdout}");
+}
+
+#[test]
+fn fmt_stdin() {
+    jqc()
+        .arg("fmt")
+        .write_stdin("{ /* hi */ \"port\": 3000 }")
+        .assert()
+        .success()
+        .stdout(contains("/* hi */"));
+}
+
+#[test]
+fn fmt_invalid_jsonc_errors() {
+    jqc()
+        .arg("fmt")
+        .write_stdin("{not valid")
+        .assert()
+        .failure()
+        .stderr(contains("Failed to parse JSONC"));
+}
+
+#[test]
+fn fmt_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("config.jsonc");
+    fs::copy(fixture("config.jsonc"), &path).unwrap();
+
+    jqc()
+        .args(["fmt", "-i", path.to_str().unwrap()])
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(&path).unwrap();
+    assert!(content.contains("// Server settings"), "comment lost: {content}");
+    assert!(content.contains("\"port\""), "field lost: {content}");
+}
+
+#[test]
+fn fmt_in_place_requires_file() {
+    jqc()
+        .args(["fmt", "-i"])
+        .write_stdin("{ \"port\": 3000 }")
+        .assert()
+        .failure()
+        .stderr(contains("--in-place requires a file"));
+}

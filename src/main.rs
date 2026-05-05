@@ -45,6 +45,21 @@ struct Cli {
 
 #[derive(Subcommand, Debug)]
 enum Command {
+    /// Edit commands (set / del / push) — flattened so they appear as top-level subcommands
+    #[command(flatten)]
+    Edit(EditCommand),
+    /// Validate and output JSONC, preserving comments
+    Fmt {
+        /// Input file (reads from stdin if omitted)
+        file: Option<PathBuf>,
+        /// Edit the file in-place
+        #[arg(short = 'i', long = "in-place")]
+        in_place: bool,
+    },
+}
+
+#[derive(Subcommand, Debug)]
+enum EditCommand {
     /// Set a value at the given path (comment-preserving)
     Set {
         /// jq-style path (e.g. .server.port)
@@ -84,12 +99,31 @@ enum Command {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
+    let use_color = resolve_color(cli.color, cli.monochrome);
+
     match cli.command {
-        Some(cmd) => run_edit(cmd),
+        Some(Command::Fmt { file, in_place }) => {
+            if in_place && file.is_none() {
+                anyhow::bail!("--in-place requires a file argument");
+            }
+            let text = read_input(file.as_deref())?;
+            jsonc_parser::parse_to_serde_value::<serde_json::Value>(&text, &Default::default())
+                .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))?;
+            if in_place {
+                write_output(&text, file.as_deref())
+            } else if use_color {
+                let palette = color::Palette::from_env();
+                println!("{}", color::colorize_jsonc(&text, &palette));
+                Ok(())
+            } else {
+                println!("{text}");
+                Ok(())
+            }
+        }
+        Some(Command::Edit(cmd)) => run_edit(cmd, use_color),
         None => {
             let filter = cli.filter.unwrap_or_else(|| ".".to_string());
             let text = read_input(cli.file.as_deref())?;
-            let use_color = resolve_color(cli.color, cli.monochrome);
             run_filter(&filter, &text, cli.raw, cli.compact, use_color)
         }
     }
@@ -125,30 +159,32 @@ fn run_filter(filter: &str, text: &str, raw: bool, compact: bool, use_color: boo
             println!("{output}");
         } else {
             let v: serde_json::Value = serde_json::from_str(&output)?;
+            let pretty = serde_json::to_string_pretty(&v)?;
             if let Some(ref p) = palette {
-                println!("{}", color::colorize(&v, 0, p));
+                println!("{}", color::colorize_jsonc(&pretty, p));
             } else {
-                println!("{}", serde_json::to_string_pretty(&v)?);
+                println!("{pretty}");
             }
         }
     }
     Ok(())
 }
 
-fn run_edit(cmd: Command) -> Result<()> {
+fn run_edit(cmd: EditCommand, use_color: bool) -> Result<()> {
     match cmd {
-        Command::Set { path, value, file, in_place } =>
-            run_edit_op(file, in_place, |text| edit::set(text, &path, &value)),
-        Command::Del { path, file, in_place } =>
-            run_edit_op(file, in_place, |text| edit::del(text, &path)),
-        Command::Push { path, value, file, in_place } =>
-            run_edit_op(file, in_place, |text| edit::push(text, &path, &value)),
+        EditCommand::Set { path, value, file, in_place } =>
+            run_edit_op(file, in_place, use_color, |text| edit::set(text, &path, &value)),
+        EditCommand::Del { path, file, in_place } =>
+            run_edit_op(file, in_place, use_color, |text| edit::del(text, &path)),
+        EditCommand::Push { path, value, file, in_place } =>
+            run_edit_op(file, in_place, use_color, |text| edit::push(text, &path, &value)),
     }
 }
 
 fn run_edit_op(
     file: Option<PathBuf>,
     in_place: bool,
+    use_color: bool,
     op: impl FnOnce(&str) -> Result<String>,
 ) -> Result<()> {
     if in_place && file.is_none() {
@@ -156,7 +192,15 @@ fn run_edit_op(
     }
     let text = read_input(file.as_deref())?;
     let result = op(&text)?;
-    write_output(&result, if in_place { file.as_deref() } else { None })
+    if in_place {
+        write_output(&result, file.as_deref())
+    } else if use_color {
+        let palette = color::Palette::from_env();
+        println!("{}", color::colorize_jsonc(&result, &palette));
+        Ok(())
+    } else {
+        write_output(&result, None)
+    }
 }
 
 /// Write `content` to `file` in-place (atomic via temp file), or to stdout if `file` is None.
