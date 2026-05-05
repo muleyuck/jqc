@@ -42,15 +42,15 @@ pub struct Palette {
 impl Default for Palette {
     fn default() -> Self {
         Palette {
-            null:       DEFAULT_COLORS[0].to_string(),
+            null: DEFAULT_COLORS[0].to_string(),
             bool_false: DEFAULT_COLORS[1].to_string(),
-            bool_true:  DEFAULT_COLORS[2].to_string(),
-            number:     DEFAULT_COLORS[3].to_string(),
-            string:     DEFAULT_COLORS[4].to_string(),
-            array:      DEFAULT_COLORS[5].to_string(),
-            object:     DEFAULT_COLORS[6].to_string(),
-            key:        DEFAULT_COLORS[7].to_string(),
-            comment:    DEFAULT_COLORS[8].to_string(),
+            bool_true: DEFAULT_COLORS[2].to_string(),
+            number: DEFAULT_COLORS[3].to_string(),
+            string: DEFAULT_COLORS[4].to_string(),
+            array: DEFAULT_COLORS[5].to_string(),
+            object: DEFAULT_COLORS[6].to_string(),
+            key: DEFAULT_COLORS[7].to_string(),
+            comment: DEFAULT_COLORS[8].to_string(),
         }
     }
 }
@@ -69,9 +69,15 @@ impl Palette {
     fn from_jqc_colors(s: &str) -> Self {
         let mut p = Palette::default();
         let fields: [&mut String; 9] = [
-            &mut p.null, &mut p.bool_false, &mut p.bool_true,
-            &mut p.number, &mut p.string, &mut p.array,
-            &mut p.object, &mut p.key, &mut p.comment,
+            &mut p.null,
+            &mut p.bool_false,
+            &mut p.bool_true,
+            &mut p.number,
+            &mut p.string,
+            &mut p.array,
+            &mut p.object,
+            &mut p.key,
+            &mut p.comment,
         ];
         for (field, part) in fields.into_iter().zip(s.split(':')) {
             if !part.is_empty() {
@@ -84,23 +90,26 @@ impl Palette {
     /// Apply ANSI color for the given token kind. Single source of truth for all colorization.
     pub fn paint_token(&self, kind: TokenKind, text: &str) -> String {
         let code = match kind {
-            TokenKind::Null        => &self.null,
-            TokenKind::BoolFalse   => &self.bool_false,
-            TokenKind::BoolTrue    => &self.bool_true,
-            TokenKind::Number      => &self.number,
+            TokenKind::Null => &self.null,
+            TokenKind::BoolFalse => &self.bool_false,
+            TokenKind::BoolTrue => &self.bool_true,
+            TokenKind::Number => &self.number,
             TokenKind::StringValue => &self.string,
-            TokenKind::ObjectKey   => &self.key,
+            TokenKind::ObjectKey => &self.key,
             TokenKind::ArrayBracket => &self.array,
-            TokenKind::ObjectBrace  => &self.object,
-            TokenKind::Comment     => &self.comment,
+            TokenKind::ObjectBrace => &self.object,
+            TokenKind::Comment => &self.comment,
         };
         format!("\x1b[{code}m{text}\x1b[0m")
     }
-
 }
 
 /// Tracks whether the next string token is an object key or a value.
-enum Ctx { ObjKey, ObjVal, Arr }
+enum Ctx {
+    ObjKey,
+    ObjVal,
+    Arr,
+}
 
 /// Colorize raw JSONC source text with ANSI codes, preserving comments and whitespace.
 ///
@@ -125,7 +134,9 @@ pub fn colorize_jsonc(text: &str, palette: &Palette) -> String {
         // Line comment: // … \n
         if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
             let start = i;
-            while i < len && bytes[i] != b'\n' { i += 1; }
+            while i < len && bytes[i] != b'\n' {
+                i += 1;
+            }
             out.push_str(&palette.paint_token(TokenKind::Comment, &text[start..i]));
             continue;
         }
@@ -134,8 +145,12 @@ pub fn colorize_jsonc(text: &str, palette: &Palette) -> String {
         if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
             let start = i;
             i += 2;
-            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') { i += 1; }
-            if i + 1 < len { i += 2; } // consume */
+            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
+                i += 1;
+            }
+            if i + 1 < len {
+                i += 2;
+            } // consume */
             out.push_str(&palette.paint_token(TokenKind::Comment, &text[start..i]));
             continue;
         }
@@ -145,8 +160,14 @@ pub fn colorize_jsonc(text: &str, palette: &Palette) -> String {
             let start = i;
             i += 1;
             while i < len {
-                if bytes[i] == b'\\' { i += 2; continue; } // skip escape sequence
-                if bytes[i] == b'"' { i += 1; break; }
+                if bytes[i] == b'\\' {
+                    i += 2;
+                    continue;
+                } // skip escape sequence
+                if bytes[i] == b'"' {
+                    i += 1;
+                    break;
+                }
                 i += 1;
             }
             let s = &text[start..i];
@@ -175,23 +196,37 @@ pub fn colorize_jsonc(text: &str, palette: &Palette) -> String {
         // Keywords: true / false / null
         if bytes[i].is_ascii_alphabetic() {
             let start = i;
-            while i < len && bytes[i].is_ascii_alphabetic() { i += 1; }
+            while i < len && bytes[i].is_ascii_alphabetic() {
+                i += 1;
+            }
             let word = &text[start..i];
             out.push_str(&match word {
-                "null"  => palette.paint_token(TokenKind::Null, word),
+                "null" => palette.paint_token(TokenKind::Null, word),
                 "false" => palette.paint_token(TokenKind::BoolFalse, word),
-                "true"  => palette.paint_token(TokenKind::BoolTrue, word),
-                _       => word.to_string(),
+                "true" => palette.paint_token(TokenKind::BoolTrue, word),
+                _ => word.to_string(),
             });
             continue;
         }
 
         // Structural characters
         match bytes[i] {
-            b'{' => { out.push_str(&palette.paint_token(TokenKind::ObjectBrace,   "{")); stack.push(Ctx::ObjKey); }
-            b'}' => { out.push_str(&palette.paint_token(TokenKind::ObjectBrace,   "}")); stack.pop(); }
-            b'[' => { out.push_str(&palette.paint_token(TokenKind::ArrayBracket,  "[")); stack.push(Ctx::Arr); }
-            b']' => { out.push_str(&palette.paint_token(TokenKind::ArrayBracket,  "]")); stack.pop(); }
+            b'{' => {
+                out.push_str(&palette.paint_token(TokenKind::ObjectBrace, "{"));
+                stack.push(Ctx::ObjKey);
+            }
+            b'}' => {
+                out.push_str(&palette.paint_token(TokenKind::ObjectBrace, "}"));
+                stack.pop();
+            }
+            b'[' => {
+                out.push_str(&palette.paint_token(TokenKind::ArrayBracket, "["));
+                stack.push(Ctx::Arr);
+            }
+            b']' => {
+                out.push_str(&palette.paint_token(TokenKind::ArrayBracket, "]"));
+                stack.pop();
+            }
             b':' => out.push(':'),
             b',' => {
                 out.push(',');
@@ -300,7 +335,10 @@ mod tests {
         let key_colored = format!("\x1b[{}m\"host\"\x1b[0m", DEFAULT_COLORS[7]);
         let val_colored = format!("\x1b[{}m\"localhost\"\x1b[0m", DEFAULT_COLORS[4]);
         assert!(out.contains(&key_colored), "key color missing: {out}");
-        assert!(out.contains(&val_colored), "string value color missing: {out}");
+        assert!(
+            out.contains(&val_colored),
+            "string value color missing: {out}"
+        );
     }
 
     #[test]

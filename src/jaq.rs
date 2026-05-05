@@ -1,8 +1,10 @@
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use jaq_core::load::{Arena, File, Loader};
-use jaq_core::{compile, data, load, val::unwrap_valr, Compiler, Ctx, Vars};
+use jaq_core::{Compiler, Ctx, Vars, compile, data, load, val::unwrap_valr};
 use jaq_json::Val;
 use jsonc_parser::ParseOptions;
+
+type CompileErrors<'a> = Vec<(File<&'a str, ()>, Vec<compile::Error<&'a str>>)>;
 
 /// Parse `text` as JSONC and apply `filter_str` as a jq filter.
 /// Returns all output values produced by the filter.
@@ -17,7 +19,10 @@ pub fn run(filter_str: &str, text: &str) -> Result<Vec<Val>> {
         .chain(jaq_std::funs::<data::JustLut<Val>>())
         .chain(jaq_json::funs::<data::JustLut<Val>>());
 
-    let program = File { code: filter_str, path: () };
+    let program = File {
+        code: filter_str,
+        path: (),
+    };
     let loader = Loader::new(defs);
     let arena = Arena::default();
     let modules = loader
@@ -37,7 +42,7 @@ pub fn run(filter_str: &str, text: &str) -> Result<Vec<Val>> {
 }
 
 /// Format jaq-core load errors (lex / parse / io) into a user-readable string.
-fn format_load_errors(errs: &[( File<&str, ()>, load::Error<&str>)]) -> String {
+fn format_load_errors(errs: &[(File<&str, ()>, load::Error<&str>)]) -> String {
     errs.iter()
         .map(|(file, err)| {
             let filter = file.code;
@@ -49,18 +54,30 @@ fn format_load_errors(errs: &[( File<&str, ()>, load::Error<&str>)]) -> String {
                             if remaining.is_empty() {
                                 format!("expected {}, got end of input", expect.as_str())
                             } else {
-                                format!("expected {}, got {:?}", expect.as_str(), truncate(remaining, 10))
+                                format!(
+                                    "expected {}, got {:?}",
+                                    expect.as_str(),
+                                    truncate(remaining, 10)
+                                )
                             }
                         })
                         .collect();
-                    format!("filter syntax error in {:?}: {}", filter, details.join("; "))
+                    format!(
+                        "filter syntax error in {:?}: {}",
+                        filter,
+                        details.join("; ")
+                    )
                 }
                 load::Error::Parse(parse_errs) => {
                     let details: Vec<_> = parse_errs
                         .iter()
                         .map(|(expect, _)| format!("expected {}", expect.as_str()))
                         .collect();
-                    format!("filter syntax error in {:?}: {}", filter, details.join("; "))
+                    format!(
+                        "filter syntax error in {:?}: {}",
+                        filter,
+                        details.join("; ")
+                    )
                 }
                 load::Error::Io(io_errs) => {
                     let details: Vec<_> = io_errs.iter().map(|(_, msg)| msg.as_str()).collect();
@@ -73,12 +90,12 @@ fn format_load_errors(errs: &[( File<&str, ()>, load::Error<&str>)]) -> String {
 }
 
 /// Format jaq-core compile errors (undefined variables / filters) into a user-readable string.
-fn format_compile_errors(errs: &[(File<&str, ()>, Vec<compile::Error<&str>>)]) -> String {
+fn format_compile_errors(errs: &CompileErrors<'_>) -> String {
     errs.iter()
         .flat_map(|(_, compile_errs)| {
-            compile_errs.iter().map(|(name, undefined)| {
-                format!("undefined {} {:?}", undefined.as_str(), name)
-            })
+            compile_errs
+                .iter()
+                .map(|(name, undefined)| format!("undefined {} {:?}", undefined.as_str(), name))
         })
         .collect::<Vec<_>>()
         .join("; ")
@@ -113,7 +130,10 @@ mod tests {
         assert!(err.contains("filter syntax error"), "got: {err}");
         // Each `got "..."` section must contain ≤ 10 chars between the quotes
         let got_sections: Vec<_> = err.split(r#"got ""#).skip(1).collect();
-        assert!(!got_sections.is_empty(), "no 'got \"...' section found in error: {err}");
+        assert!(
+            !got_sections.is_empty(),
+            "no 'got \"...' section found in error: {err}"
+        );
         for part in got_sections {
             let got_content = part.split('"').next().unwrap_or("");
             assert!(

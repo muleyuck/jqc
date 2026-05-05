@@ -3,7 +3,7 @@ mod edit;
 mod jaq;
 mod query;
 
-use anyhow::{anyhow, Result};
+use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
 use is_terminal::IsTerminal;
 use std::io::{self, Read, Write};
@@ -137,14 +137,18 @@ fn resolve_color(force_color: bool, monochrome: bool) -> bool {
         return true;
     }
     // NO_COLOR spec: https://no-color.org/
-    if std::env::var("NO_COLOR").map_or(false, |v| !v.is_empty()) {
+    if std::env::var("NO_COLOR").is_ok_and(|v| !v.is_empty()) {
         return false;
     }
     std::io::stdout().is_terminal()
 }
 
 fn run_filter(filter: &str, text: &str, raw: bool, compact: bool, use_color: bool) -> Result<()> {
-    let palette = if use_color { Some(color::Palette::from_env()) } else { None };
+    let palette = if use_color {
+        Some(color::Palette::from_env())
+    } else {
+        None
+    };
     let results = query::run_filter(filter, text)?;
     for val in results {
         let output = format!("{val}");
@@ -172,12 +176,27 @@ fn run_filter(filter: &str, text: &str, raw: bool, compact: bool, use_color: boo
 
 fn run_edit(cmd: EditCommand, use_color: bool) -> Result<()> {
     match cmd {
-        EditCommand::Set { path, value, file, in_place } =>
-            run_edit_op(file, in_place, use_color, |text| edit::set(text, &path, &value)),
-        EditCommand::Del { path, file, in_place } =>
-            run_edit_op(file, in_place, use_color, |text| edit::del(text, &path)),
-        EditCommand::Push { path, value, file, in_place } =>
-            run_edit_op(file, in_place, use_color, |text| edit::push(text, &path, &value)),
+        EditCommand::Set {
+            path,
+            value,
+            file,
+            in_place,
+        } => run_edit_op(file, in_place, use_color, |text| {
+            edit::set(text, &path, &value)
+        }),
+        EditCommand::Del {
+            path,
+            file,
+            in_place,
+        } => run_edit_op(file, in_place, use_color, |text| edit::del(text, &path)),
+        EditCommand::Push {
+            path,
+            value,
+            file,
+            in_place,
+        } => run_edit_op(file, in_place, use_color, |text| {
+            edit::push(text, &path, &value)
+        }),
     }
 }
 

@@ -468,7 +468,10 @@ fn filter_force_color_output() {
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success());
-    assert!(stdout.contains("\x1b["), "ANSI codes missing with -C: {stdout}");
+    assert!(
+        stdout.contains("\x1b["),
+        "ANSI codes missing with -C: {stdout}"
+    );
 }
 
 #[test]
@@ -480,7 +483,10 @@ fn filter_monochrome_suppresses_color() {
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success());
-    assert!(!stdout.contains("\x1b["), "ANSI codes present despite -M: {stdout}");
+    assert!(
+        !stdout.contains("\x1b["),
+        "ANSI codes present despite -M: {stdout}"
+    );
 }
 
 // ---------------------------------------------------------------------------
@@ -571,9 +577,18 @@ fn fmt_preserves_comments() {
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success());
-    assert!(stdout.contains("// Server settings"), "line comment lost: {stdout}");
-    assert!(stdout.contains("// default port"), "inline comment lost: {stdout}");
-    assert!(stdout.contains("/* Feature flags */"), "block comment lost: {stdout}");
+    assert!(
+        stdout.contains("// Server settings"),
+        "line comment lost: {stdout}"
+    );
+    assert!(
+        stdout.contains("// default port"),
+        "inline comment lost: {stdout}"
+    );
+    assert!(
+        stdout.contains("/* Feature flags */"),
+        "block comment lost: {stdout}"
+    );
     assert!(stdout.contains("\"port\""), "field lost: {stdout}");
 }
 
@@ -609,7 +624,10 @@ fn fmt_in_place() {
         .success();
 
     let content = fs::read_to_string(&path).unwrap();
-    assert!(content.contains("// Server settings"), "comment lost: {content}");
+    assert!(
+        content.contains("// Server settings"),
+        "comment lost: {content}"
+    );
     assert!(content.contains("\"port\""), "field lost: {content}");
 }
 

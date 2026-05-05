@@ -1,7 +1,7 @@
-use anyhow::{anyhow, bail, Result};
+use anyhow::{Result, anyhow, bail};
 use jaq_json::Val;
-use jsonc_parser::cst::{CstContainerNode, CstInputValue, CstLeafNode, CstNode, CstRootNode};
 use jsonc_parser::ParseOptions;
+use jsonc_parser::cst::{CstContainerNode, CstInputValue, CstLeafNode, CstNode, CstRootNode};
 
 use crate::jaq;
 
@@ -42,12 +42,13 @@ pub fn resolve_path(path_expr: &str, text: &str) -> Result<Vec<PathSegment>> {
         .into_iter()
         .map(|seg| match seg {
             Val::BStr(b) | Val::TStr(b) => {
-                let s = std::str::from_utf8(&b)
-                    .map_err(|e| anyhow!("non-UTF8 path key: {e}"))?;
+                let s = std::str::from_utf8(&b).map_err(|e| anyhow!("non-UTF8 path key: {e}"))?;
                 Ok(PathSegment::Key(s.to_string()))
             }
             Val::Num(n) => {
-                let i = n.as_isize().ok_or_else(|| anyhow!("path index is not an integer: {n}"))?;
+                let i = n
+                    .as_isize()
+                    .ok_or_else(|| anyhow!("path index is not an integer: {n}"))?;
                 let idx = usize::try_from(i)
                     .map_err(|_| anyhow!("negative array index from path(): {i}"))?;
                 Ok(PathSegment::Index(idx))
@@ -66,9 +67,9 @@ pub fn navigate(root: &CstRootNode, segments: &[PathSegment]) -> Result<CstNode>
     for (i, seg) in segments.iter().enumerate() {
         match seg {
             PathSegment::Key(key) => {
-                let obj = current
-                    .as_object()
-                    .ok_or_else(|| anyhow!("expected object at segment {i} (key={key:?}), got: {current}"))?;
+                let obj = current.as_object().ok_or_else(|| {
+                    anyhow!("expected object at segment {i} (key={key:?}), got: {current}")
+                })?;
                 current = obj
                     .get(key)
                     .ok_or_else(|| anyhow!("key {key:?} not found"))?
@@ -76,13 +77,15 @@ pub fn navigate(root: &CstRootNode, segments: &[PathSegment]) -> Result<CstNode>
                     .ok_or_else(|| anyhow!("key {key:?} has no value"))?;
             }
             PathSegment::Index(idx) => {
-                let arr = current
-                    .as_array()
-                    .ok_or_else(|| anyhow!("expected array at segment {i} (index={idx}), got: {current}"))?;
+                let arr = current.as_array().ok_or_else(|| {
+                    anyhow!("expected array at segment {i} (index={idx}), got: {current}")
+                })?;
                 let elements = arr.elements();
                 current = elements
                     .get(*idx)
-                    .ok_or_else(|| anyhow!("array index {idx} out of bounds (len={})", elements.len()))?
+                    .ok_or_else(|| {
+                        anyhow!("array index {idx} out of bounds (len={})", elements.len())
+                    })?
                     .clone();
             }
         }
@@ -116,18 +119,32 @@ fn to_cst_input(v: serde_json::Value) -> CstInputValue {
 fn replace_cst_node(node: CstNode, value: CstInputValue) -> Result<()> {
     match node {
         CstNode::Leaf(leaf) => match leaf {
-            CstLeafNode::StringLit(n) => { n.replace_with(value); }
-            CstLeafNode::NumberLit(n) => { n.replace_with(value); }
-            CstLeafNode::BooleanLit(n) => { n.replace_with(value); }
-            CstLeafNode::NullKeyword(n) => { n.replace_with(value); }
-            CstLeafNode::WordLit(n) => { n.replace_with(value); }
+            CstLeafNode::StringLit(n) => {
+                n.replace_with(value);
+            }
+            CstLeafNode::NumberLit(n) => {
+                n.replace_with(value);
+            }
+            CstLeafNode::BooleanLit(n) => {
+                n.replace_with(value);
+            }
+            CstLeafNode::NullKeyword(n) => {
+                n.replace_with(value);
+            }
+            CstLeafNode::WordLit(n) => {
+                n.replace_with(value);
+            }
             other => bail!("cannot replace trivia node: {other}"),
-        }
+        },
         CstNode::Container(container) => match container {
-            CstContainerNode::Object(n) => { n.replace_with(value); }
-            CstContainerNode::Array(n) => { n.replace_with(value); }
+            CstContainerNode::Object(n) => {
+                n.replace_with(value);
+            }
+            CstContainerNode::Array(n) => {
+                n.replace_with(value);
+            }
             other => bail!("cannot replace root or object property node: {other}"),
-        }
+        },
     }
     Ok(())
 }
@@ -160,7 +177,8 @@ pub fn del(text: &str, path_expr: &str) -> Result<String> {
     let root = parse_cst(text)?;
 
     let parent_node = if segments.len() == 1 {
-        root.value().ok_or_else(|| anyhow!("JSONC input is empty"))?
+        root.value()
+            .ok_or_else(|| anyhow!("JSONC input is empty"))?
     } else {
         navigate(&root, &segments[..segments.len() - 1])?
     };
@@ -205,13 +223,22 @@ mod tests {
     #[test]
     fn test_resolve_nested_key() {
         let segs = resolve_path(".server.port", SAMPLE).unwrap();
-        assert_eq!(segs, vec![PathSegment::Key("server".into()), PathSegment::Key("port".into())]);
+        assert_eq!(
+            segs,
+            vec![
+                PathSegment::Key("server".into()),
+                PathSegment::Key("port".into())
+            ]
+        );
     }
 
     #[test]
     fn test_resolve_array_index() {
         let segs = resolve_path(".tags[0]", SAMPLE).unwrap();
-        assert_eq!(segs, vec![PathSegment::Key("tags".into()), PathSegment::Index(0)]);
+        assert_eq!(
+            segs,
+            vec![PathSegment::Key("tags".into()), PathSegment::Index(0)]
+        );
     }
 
     #[test]
@@ -220,7 +247,10 @@ mod tests {
         let segs = resolve_path(".server.missing", SAMPLE).unwrap();
         assert_eq!(
             segs,
-            vec![PathSegment::Key("server".into()), PathSegment::Key("missing".into())]
+            vec![
+                PathSegment::Key("server".into()),
+                PathSegment::Key("missing".into())
+            ]
         );
     }
 
@@ -242,7 +272,10 @@ mod tests {
         // Ensures navigation is step-by-step and does not pick up the top-level "port"
         let input = r#"{"port": 80, "server": {"port": 3000}}"#;
         let root = CstRootNode::parse(input, &jsonc_parser::ParseOptions::default()).unwrap();
-        let segs = vec![PathSegment::Key("server".into()), PathSegment::Key("port".into())];
+        let segs = vec![
+            PathSegment::Key("server".into()),
+            PathSegment::Key("port".into()),
+        ];
         let node = navigate(&root, &segs).unwrap();
         assert_eq!(node.to_string(), "3000");
     }
@@ -250,7 +283,10 @@ mod tests {
     #[test]
     fn test_navigate_key_not_found_error() {
         let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
-        let segs = vec![PathSegment::Key("server".into()), PathSegment::Key("nonexistent".into())];
+        let segs = vec![
+            PathSegment::Key("server".into()),
+            PathSegment::Key("nonexistent".into()),
+        ];
         assert!(navigate(&root, &segs).is_err());
     }
 
@@ -258,7 +294,10 @@ mod tests {
     fn test_navigate_type_mismatch_error() {
         // "tags" is an array; navigating into it with a Key segment must fail
         let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
-        let segs = vec![PathSegment::Key("tags".into()), PathSegment::Key("foo".into())];
+        let segs = vec![
+            PathSegment::Key("tags".into()),
+            PathSegment::Key("foo".into()),
+        ];
         assert!(navigate(&root, &segs).is_err());
     }
 
@@ -302,7 +341,10 @@ mod tests {
     fn test_set_nested_preserves_comments() {
         let input = "{\n  // server config\n  \"server\": {\"port\": 3000}\n}";
         let result = set(input, ".server.port", "8080").unwrap();
-        assert!(result.contains("// server config"), "comment must be preserved");
+        assert!(
+            result.contains("// server config"),
+            "comment must be preserved"
+        );
         assert!(result.contains("8080"));
         assert!(!result.contains("3000"));
     }
@@ -360,7 +402,10 @@ mod tests {
         assert!(!result.contains("localhost"));
         assert!(result.contains("3000"));
         // No stray leading comma
-        assert!(!result.contains(", \"port\""), "no leading comma before remaining key");
+        assert!(
+            !result.contains(", \"port\""),
+            "no leading comma before remaining key"
+        );
     }
 
     #[test]
@@ -396,7 +441,10 @@ mod tests {
         // Verify order: "c" must appear after "b"
         let pos_b = result.find("\"b\"").unwrap();
         let pos_c = result.find("\"c\"").unwrap();
-        assert!(pos_c > pos_b, "new element must be appended after existing elements");
+        assert!(
+            pos_c > pos_b,
+            "new element must be appended after existing elements"
+        );
     }
 
     #[test]
@@ -420,14 +468,20 @@ mod tests {
         let result = push(input, ".server.tags", "\"b\"").unwrap();
         let pos_a = result.find("\"a\"").unwrap();
         let pos_b = result.find("\"b\"").unwrap();
-        assert!(pos_b > pos_a, "new element must be appended after existing elements");
+        assert!(
+            pos_b > pos_a,
+            "new element must be appended after existing elements"
+        );
     }
 
     #[test]
     fn test_push_preserves_comments() {
         let input = "{\n  // plugin list\n  \"plugins\": [\"a\"]\n}";
         let result = push(input, ".plugins", "\"b\"").unwrap();
-        assert!(result.contains("// plugin list"), "comment must be preserved");
+        assert!(
+            result.contains("// plugin list"),
+            "comment must be preserved"
+        );
         assert!(result.contains("\"b\""));
     }
 
