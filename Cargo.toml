@@ -2,8 +2,10 @@
 name = "jqc"
 version = "0.1.0"
 edition = "2024"
-description = "A jq-like CLI for JSONC (JSON with Comments)"
+description = "jq for JSONC — query, view, and edit JSON-with-Comments files without losing your comments."
 license = "MIT"
+repository = "https://github.com/muleyuck/jqc"
+homepage = "https://github.com/muleyuck/jqc"
 
 [[bin]]
 name = "jqc"
@@ -23,3 +25,8 @@ is-terminal = "0.4"
 [dev-dependencies]
 assert_cmd = "2.2.1"
 predicates = "3.1.4"
+
+# The profile that 'dist' will build with
+[profile.dist]
+inherits = "release"
+lto = "thin"
