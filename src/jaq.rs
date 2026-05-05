@@ -106,6 +106,25 @@ mod tests {
     }
 
     #[test]
+    fn test_lex_error_truncates_long_remaining() {
+        // 50 invalid chars after "[": truncate(remaining, 10) must cut each "got" value to ≤ 10 chars
+        let filter = format!(".foo[{}]", "^".repeat(50));
+        let err = run_err(&filter, "{}");
+        assert!(err.contains("filter syntax error"), "got: {err}");
+        // Each `got "..."` section must contain ≤ 10 chars between the quotes
+        let got_sections: Vec<_> = err.split(r#"got ""#).skip(1).collect();
+        assert!(!got_sections.is_empty(), "no 'got \"...' section found in error: {err}");
+        for part in got_sections {
+            let got_content = part.split('"').next().unwrap_or("");
+            assert!(
+                got_content.len() <= 10,
+                "remaining was not truncated (len={}): {err}",
+                got_content.len()
+            );
+        }
+    }
+
+    #[test]
     fn test_lex_error_unclosed_bracket() {
         let err = run_err(".foo[", "{}");
         assert!(err.contains("filter syntax error"), "got: {err}");
