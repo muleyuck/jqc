@@ -512,9 +512,11 @@ fn error_nonexistent_file() {
 }
 
 #[test]
-fn error_no_filter_no_subcommand() {
+fn no_filter_defaults_to_identity() {
+    // jq-compatible: no filter → implicit "."
     jqc()
+        .write_stdin(r#"{"port": 3000}"#)
         .assert()
-        .failure()
-        .stderr(contains("filter expression required"));
+        .success()
+        .stdout(contains("\"port\""));
 }

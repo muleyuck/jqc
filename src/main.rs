@@ -77,9 +77,7 @@ fn main() -> Result<()> {
     match cli.command {
         Some(cmd) => run_edit(cmd),
         None => {
-            let filter = cli
-                .filter
-                .ok_or_else(|| anyhow!("filter expression required (or use a subcommand)"))?;
+            let filter = cli.filter.unwrap_or_else(|| ".".to_string());
             let text = read_input(cli.file.as_deref())?;
             run_filter(&filter, &text, cli.raw, cli.compact)
         }
