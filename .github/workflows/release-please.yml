@@ -1,0 +1,26 @@
+name: Release Please
+
+on:
+  workflow_run:
+    workflows:
+      - unit-test
+    types:
+      - completed
+    branches:
+      - main
+
+permissions: {}
+
+jobs:
+  release-please:
+    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - uses: googleapis/release-please-action@16a9c90856f42705d54a6fda1823352bdc62cf38 # v4.4.0
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          config-file: .github/release-please-config.json
+          manifest-file: .github/.release-please-manifest.json
