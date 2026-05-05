@@ -1,9 +1,11 @@
+mod color;
 mod edit;
 mod jaq;
 mod query;
 
 use anyhow::{anyhow, Result};
 use clap::{Parser, Subcommand};
+use is_terminal::IsTerminal;
 use std::io::{self, Read, Write};
 use std::path::PathBuf;
 
@@ -31,6 +33,14 @@ struct Cli {
     /// Compact output (no newlines)
     #[arg(short = 'c', long = "compact")]
     compact: bool,
+
+    /// Force color output even when writing to a pipe
+    #[arg(short = 'C', long = "color-output")]
+    color: bool,
+
+    /// Disable color output
+    #[arg(short = 'M', long = "monochrome-output")]
+    monochrome: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -79,12 +89,28 @@ fn main() -> Result<()> {
         None => {
             let filter = cli.filter.unwrap_or_else(|| ".".to_string());
             let text = read_input(cli.file.as_deref())?;
-            run_filter(&filter, &text, cli.raw, cli.compact)
+            let use_color = resolve_color(cli.color, cli.monochrome);
+            run_filter(&filter, &text, cli.raw, cli.compact, use_color)
         }
     }
 }
 
-fn run_filter(filter: &str, text: &str, raw: bool, compact: bool) -> Result<()> {
+fn resolve_color(force_color: bool, monochrome: bool) -> bool {
+    if monochrome {
+        return false;
+    }
+    if force_color {
+        return true;
+    }
+    // NO_COLOR spec: https://no-color.org/
+    if std::env::var("NO_COLOR").map_or(false, |v| !v.is_empty()) {
+        return false;
+    }
+    std::io::stdout().is_terminal()
+}
+
+fn run_filter(filter: &str, text: &str, raw: bool, compact: bool, use_color: bool) -> Result<()> {
+    let palette = if use_color { Some(color::Palette::from_env()) } else { None };
     let results = query::run_filter(filter, text)?;
     for val in results {
         let output = format!("{val}");
@@ -98,9 +124,12 @@ fn run_filter(filter: &str, text: &str, raw: bool, compact: bool) -> Result<()> 
         } else if compact {
             println!("{output}");
         } else {
-            // Pretty-print via serde_json
             let v: serde_json::Value = serde_json::from_str(&output)?;
-            println!("{}", serde_json::to_string_pretty(&v)?);
+            if let Some(ref p) = palette {
+                println!("{}", color::colorize(&v, 0, p));
+            } else {
+                println!("{}", serde_json::to_string_pretty(&v)?);
+            }
         }
     }
     Ok(())
