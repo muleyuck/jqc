@@ -456,6 +456,34 @@ fn deno_push_lint_tag_preserves_comments() {
 }
 
 // ---------------------------------------------------------------------------
+// Color / monochrome flags
+// ---------------------------------------------------------------------------
+
+#[test]
+fn filter_force_color_output() {
+    // -C forces ANSI codes even when stdout is a pipe (non-TTY)
+    let out = jqc()
+        .args(["-C", ".", &fixture("config.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(stdout.contains("\x1b["), "ANSI codes missing with -C: {stdout}");
+}
+
+#[test]
+fn filter_monochrome_suppresses_color() {
+    // -M disables color even when -C is also given
+    let out = jqc()
+        .args(["-C", "-M", ".", &fixture("config.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(!stdout.contains("\x1b["), "ANSI codes present despite -M: {stdout}");
+}
+
+// ---------------------------------------------------------------------------
 // Error cases
 // ---------------------------------------------------------------------------
 
@@ -466,6 +494,16 @@ fn set_nonexistent_key_errors() {
         .assert()
         .failure()
         .stderr(contains("not found"));
+}
+
+#[test]
+fn del_in_place_requires_file() {
+    jqc()
+        .args(["del", ".debug", "-i"])
+        .write_stdin(r#"{"debug": false}"#)
+        .assert()
+        .failure()
+        .stderr(contains("--in-place requires a file"));
 }
 
 #[test]
