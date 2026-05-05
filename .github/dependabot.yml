@@ -1,0 +1,41 @@
+version: 2
+updates:
+  - package-ecosystem: github-actions
+    directory: /
+    assignees:
+      - muleyuck
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+    exclude-paths:
+      - ".github/workflows/release.yml"
+    schedule:
+      interval: weekly
+      day: saturday
+      timezone: Asia/Tokyo
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    open-pull-requests-limit: 10
+
+  - package-ecosystem: cargo
+    directory: /
+    assignees:
+      - muleyuck
+    groups:
+      dependencies:
+        patterns:
+          - "*"
+    schedule:
+      interval: weekly
+      day: saturday
+      timezone: Asia/Tokyo
+    ignore:
+      - dependency-name: '*'
+        update-types:
+          - version-update:semver-major
+    commit-message:
+      prefix: "chore"
+      include: "scope"
+    open-pull-requests-limit: 10
