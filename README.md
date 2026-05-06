@@ -1,14 +1,14 @@
+[![unit-test](https://github.com/muleyuck/jqc/actions/workflows/unit-test.yml/badge.svg)](https://github.com/muleyuck/jqc/actions/workflows/unit-test.yml)
+![Software License](https://img.shields.io/badge/license-MIT-brightgreen.svg?style=flat-square)
+[![Release](https://img.shields.io/github/release/muleyuck/jqc.svg)](https://github.com/muleyuck/jqc/releases/latest)
+
 # jqc
 
-**jq for JSONC — query, view, and edit JSON-with-Comments files without losing your comments.**
+**🧩 jq for JSONC — query, view, and edit JSON-with-Comments files without losing your comments.**
 
 `jq` is the standard tool for JSON on the command line. But many config files — VS Code `settings.json`, `tsconfig.json`, `deno.jsonc`, `biome.jsonc` — use JSONC, which extends JSON with `//` and `/* */` comments. Piping these through `jq` silently strips every comment.
 
-`jqc` is a drop-in companion to `jq` that speaks JSONC natively.
-
-- **Same jq query syntax** — no new language to learn
-- **Colorized output with comments** — view JSONC with syntax highlighting that includes comments
-- **Comment-preserving edits** — `set`, `del`, `push` rewrite only the target value; everything else, including inline comments, stays exactly as written
+![demo](https://github.com/user-attachments/assets/24711d01-76b0-4a37-a3ed-e13a90a62696)
 
 ## Install
 

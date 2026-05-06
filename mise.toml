@@ -1,2 +1,4 @@
 [tools]
 rust = "1.90.0"
+prek = "0.3.3"
+"cargo:cargo-dist" = "0.30.3"
