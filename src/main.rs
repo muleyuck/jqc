@@ -1,7 +1,6 @@
 mod color;
 mod edit;
 mod jaq;
-mod query;
 
 use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
@@ -13,7 +12,7 @@ use std::path::PathBuf;
 #[command(
     name = "jqc",
     version,
-    about = "A jq-like CLI for JSONC (JSON with Comments)"
+    about = "jq for JSONC — query, view, and edit JSON-with-Comments files without losing your comments."
 )]
 struct Cli {
     #[command(subcommand)]
@@ -149,7 +148,7 @@ fn run_filter(filter: &str, text: &str, raw: bool, compact: bool, use_color: boo
     } else {
         None
     };
-    let results = query::run_filter(filter, text)?;
+    let results = jaq::run(filter, text)?;
     for val in results {
         let output = format!("{val}");
         if raw {
