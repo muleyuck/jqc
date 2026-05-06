@@ -1,0 +1,13 @@
+// leading line comment
+/* leading block comment */
+{
+  "host": "localhost",
+  "tags": [
+    // comment before first element
+    "alpha",
+    /* comment between elements */
+    "beta",
+    "gamma" // comment on last element (no trailing comma)
+  ], // comment after closing bracket
+  "inline_block": /* inline block comment */ "value"
+}

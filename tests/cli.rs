@@ -640,3 +640,213 @@ fn fmt_in_place_requires_file() {
         .failure()
         .stderr(contains("--in-place requires a file"));
 }
+
+// ---------------------------------------------------------------------------
+// Tricky comment positions (tricky.jsonc)
+// ---------------------------------------------------------------------------
+
+#[test]
+fn fmt_preserves_file_leading_comment() {
+    let out = jqc()
+        .args(["fmt", &fixture("tricky.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(
+        stdout.contains("// leading line comment"),
+        "file-leading line comment lost: {stdout}"
+    );
+    assert!(
+        stdout.contains("/* leading block comment */"),
+        "file-leading block comment lost: {stdout}"
+    );
+}
+
+#[test]
+fn fmt_preserves_comment_between_array_elements() {
+    let out = jqc()
+        .args(["fmt", &fixture("tricky.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(
+        stdout.contains("/* comment between elements */"),
+        "inter-element block comment lost: {stdout}"
+    );
+    assert!(
+        stdout.contains("// comment before first element"),
+        "pre-element line comment lost: {stdout}"
+    );
+    assert!(
+        stdout.contains("// comment on last element"),
+        "trailing element line comment lost: {stdout}"
+    );
+}
+
+#[test]
+fn fmt_preserves_inline_block_comment_between_key_and_value() {
+    let out = jqc()
+        .args(["fmt", &fixture("tricky.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(
+        stdout.contains("/* inline block comment */"),
+        "inline block comment between key and value lost: {stdout}"
+    );
+}
+
+#[test]
+fn push_preserves_comment_between_array_elements() {
+    let out = jqc()
+        .args(["push", ".tags", "\"delta\"", &fixture("tricky.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(stdout.contains("\"delta\""), "new element not appended: {stdout}");
+    assert!(
+        stdout.contains("/* comment between elements */"),
+        "inter-element comment lost after push: {stdout}"
+    );
+    assert!(
+        stdout.contains("// comment before first element"),
+        "pre-element comment lost after push: {stdout}"
+    );
+}
+
+// ---------------------------------------------------------------------------
+// edge.jsonc — comment-like strings, value types, non-ASCII
+// ---------------------------------------------------------------------------
+
+#[test]
+fn filter_string_with_url_containing_double_slash() {
+    jqc()
+        .args([".url", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("\"https://example.com/path\"\n");
+}
+
+#[test]
+fn filter_string_containing_line_comment_syntax() {
+    jqc()
+        .args([".line_comment_in_string", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("\"// not a comment\"\n");
+}
+
+#[test]
+fn filter_string_containing_block_comment_syntax() {
+    jqc()
+        .args([".block_comment_in_string", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("\"/* not a comment */\"\n");
+}
+
+#[test]
+fn filter_null_value() {
+    jqc()
+        .args([".null_value", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("null\n");
+}
+
+#[test]
+fn filter_negative_number() {
+    jqc()
+        .args([".negative", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("-42\n");
+}
+
+#[test]
+fn filter_japanese_string() {
+    jqc()
+        .args([".japanese", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("\"日本語テキスト\"\n");
+}
+
+#[test]
+fn filter_japanese_string_raw() {
+    jqc()
+        .args(["-r", ".japanese", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("日本語テキスト\n");
+}
+
+#[test]
+fn filter_emoji_string() {
+    jqc()
+        .args([".emoji", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("\"🎉\"\n");
+}
+
+#[test]
+fn filter_mixed_non_ascii() {
+    jqc()
+        .args([".mixed", &fixture("edge.jsonc")])
+        .assert()
+        .success()
+        .stdout("\"Hello 世界 🌍\"\n");
+}
+
+#[test]
+fn fmt_preserves_non_ascii_in_values_and_comments() {
+    // Verifies that non-ASCII characters in both string values and comments
+    // (// 日本語のコメント 🗒️, /* 絵文字フィールド */, // 混在テキスト) survive fmt.
+    let out = jqc()
+        .args(["fmt", &fixture("edge.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(stdout.contains("日本語テキスト"), "Japanese value missing");
+    assert!(stdout.contains("🎉"), "Emoji value missing");
+    assert!(stdout.contains("Hello 世界 🌍"), "Mixed value missing");
+    assert!(
+        stdout.contains("日本語のコメント 🗒️"),
+        "Japanese line comment missing"
+    );
+    assert!(
+        stdout.contains("絵文字フィールド"),
+        "Japanese block comment missing"
+    );
+    assert!(stdout.contains("混在テキスト"), "Japanese inline comment missing");
+}
+
+// ---------------------------------------------------------------------------
+// jaq-std filter integration
+// ---------------------------------------------------------------------------
+
+#[test]
+fn filter_pipe_length() {
+    jqc()
+        .arg(".plugins | length")
+        .write_stdin(r#"{"plugins": ["a", "b", "c"]}"#)
+        .assert()
+        .success()
+        .stdout("3\n");
+}
+
+#[test]
+fn filter_select() {
+    jqc()
+        .arg(".plugins[] | select(. == \"auth\")")
+        .write_stdin(r#"{"plugins": ["core", "auth", "logger"]}"#)
+        .assert()
+        .success()
+        .stdout("\"auth\"\n");
+}

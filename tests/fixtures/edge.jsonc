@@ -1,0 +1,12 @@
+{
+  "url": "https://example.com/path",
+  "line_comment_in_string": "// not a comment",
+  "block_comment_in_string": "/* not a comment */",
+  "null_value": null,
+  "negative": -42,
+  "float": 3.14,
+  // 日本語のコメント 🗒️
+  "japanese": "日本語テキスト",
+  "emoji": "🎉", /* 絵文字フィールド */
+  "mixed": "Hello 世界 🌍" // 混在テキスト
+}
