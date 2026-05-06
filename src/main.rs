@@ -111,8 +111,7 @@ fn main() -> Result<()> {
             if in_place {
                 write_output(&text, file.as_deref())
             } else if use_color {
-                let palette = color::Palette::from_env();
-                println!("{}", color::colorize_jsonc(&text, &palette));
+                print_colored(&text);
                 Ok(())
             } else {
                 println!("{text}");
@@ -123,9 +122,17 @@ fn main() -> Result<()> {
         None => {
             let filter = cli.filter.unwrap_or_else(|| ".".to_string());
             let text = read_input(cli.file.as_deref())?;
-            run_filter(&filter, &text, cli.raw, cli.compact, use_color)
+            for val in jaq::run(&filter, &text)? {
+                print_value(&format!("{val}"), cli.raw, cli.compact, use_color)?;
+            }
+            Ok(())
         }
     }
+}
+
+fn print_colored(text: &str) {
+    let palette = color::Palette::from_env();
+    println!("{}", color::colorize_jsonc(text, &palette));
 }
 
 fn resolve_color(force_color: bool, monochrome: bool) -> bool {
@@ -142,32 +149,23 @@ fn resolve_color(force_color: bool, monochrome: bool) -> bool {
     std::io::stdout().is_terminal()
 }
 
-fn run_filter(filter: &str, text: &str, raw: bool, compact: bool, use_color: bool) -> Result<()> {
-    let palette = if use_color {
-        Some(color::Palette::from_env())
-    } else {
-        None
-    };
-    let results = jaq::run(filter, text)?;
-    for val in results {
-        let output = format!("{val}");
-        if raw {
-            // Strip surrounding quotes from string values
-            if output.starts_with('"') && output.ends_with('"') {
-                println!("{}", &output[1..output.len() - 1]);
-            } else {
-                println!("{output}");
-            }
-        } else if compact {
-            println!("{output}");
+fn print_value(output: &str, raw: bool, compact: bool, use_color: bool) -> Result<()> {
+    if raw {
+        // Strip surrounding quotes from string values
+        if output.starts_with('"') && output.ends_with('"') {
+            println!("{}", &output[1..output.len() - 1]);
         } else {
-            let v: serde_json::Value = serde_json::from_str(&output)?;
-            let pretty = serde_json::to_string_pretty(&v)?;
-            if let Some(ref p) = palette {
-                println!("{}", color::colorize_jsonc(&pretty, p));
-            } else {
-                println!("{pretty}");
-            }
+            println!("{output}");
+        }
+    } else if compact {
+        println!("{output}");
+    } else {
+        let v: serde_json::Value = serde_json::from_str(output)?;
+        let pretty = serde_json::to_string_pretty(&v)?;
+        if use_color {
+            print_colored(&pretty);
+        } else {
+            println!("{pretty}");
         }
     }
     Ok(())
@@ -213,8 +211,7 @@ fn run_edit_op(
     if in_place {
         write_output(&result, file.as_deref())
     } else if use_color {
-        let palette = color::Palette::from_env();
-        println!("{}", color::colorize_jsonc(&result, &palette));
+        print_colored(&result);
         Ok(())
     } else {
         write_output(&result, None)

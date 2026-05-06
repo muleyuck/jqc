@@ -72,7 +72,7 @@ pub fn navigate(root: &CstRootNode, segments: &[PathSegment]) -> Result<CstNode>
                 })?;
                 current = obj
                     .get(key)
-                    .ok_or_else(|| anyhow!("key {key:?} not found"))?
+                    .ok_or_else(|| anyhow!("key {key:?} not found at path segment [{i}]"))?
                     .value()
                     .ok_or_else(|| anyhow!("key {key:?} has no value"))?;
             }
@@ -220,6 +220,10 @@ mod tests {
 
     const SAMPLE: &str = r#"{"server": {"host": "localhost", "port": 3000}, "tags": ["a", "b"]}"#;
 
+    fn parse_sample() -> CstRootNode {
+        CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap()
+    }
+
     #[test]
     fn test_resolve_nested_key() {
         let segs = resolve_path(".server.port", SAMPLE).unwrap();
@@ -261,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_navigate_array_index() {
-        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let root = parse_sample();
         let segs = vec![PathSegment::Key("tags".into()), PathSegment::Index(1)];
         let node = navigate(&root, &segs).unwrap();
         assert_eq!(node.to_string(), "\"b\"");
@@ -282,7 +286,7 @@ mod tests {
 
     #[test]
     fn test_navigate_key_not_found_error() {
-        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let root = parse_sample();
         let segs = vec![
             PathSegment::Key("server".into()),
             PathSegment::Key("nonexistent".into()),
@@ -293,7 +297,7 @@ mod tests {
     #[test]
     fn test_navigate_type_mismatch_error() {
         // "tags" is an array; navigating into it with a Key segment must fail
-        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let root = parse_sample();
         let segs = vec![
             PathSegment::Key("tags".into()),
             PathSegment::Key("foo".into()),
@@ -303,7 +307,7 @@ mod tests {
 
     #[test]
     fn test_navigate_index_out_of_bounds_error() {
-        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let root = parse_sample();
         let segs = vec![PathSegment::Key("tags".into()), PathSegment::Index(99)];
         assert!(navigate(&root, &segs).is_err());
     }
@@ -311,7 +315,7 @@ mod tests {
     #[test]
     fn test_navigate_empty_segments() {
         // Empty path returns the root value itself
-        let root = CstRootNode::parse(SAMPLE, &jsonc_parser::ParseOptions::default()).unwrap();
+        let root = parse_sample();
         let node = navigate(&root, &[]).unwrap();
         assert!(node.as_object().is_some());
     }

@@ -707,7 +707,10 @@ fn push_preserves_comment_between_array_elements() {
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success());
-    assert!(stdout.contains("\"delta\""), "new element not appended: {stdout}");
+    assert!(
+        stdout.contains("\"delta\""),
+        "new element not appended: {stdout}"
+    );
     assert!(
         stdout.contains("/* comment between elements */"),
         "inter-element comment lost after push: {stdout}"
@@ -824,7 +827,10 @@ fn fmt_preserves_non_ascii_in_values_and_comments() {
         stdout.contains("絵文字フィールド"),
         "Japanese block comment missing"
     );
-    assert!(stdout.contains("混在テキスト"), "Japanese inline comment missing");
+    assert!(
+        stdout.contains("混在テキスト"),
+        "Japanese inline comment missing"
+    );
 }
 
 // ---------------------------------------------------------------------------

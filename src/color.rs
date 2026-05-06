@@ -1,6 +1,6 @@
 /// ANSI color codes for JSONC token types.
-/// Order: null, false, true, numbers, strings, arrays, objects, object-keys, comments
 /// Configurable via JQC_COLORS environment variable (colon-separated, 9 fields).
+/// Index: [0] null, [1] false, [2] true, [3] numbers, [4] strings, [5] arrays, [6] objects, [7] object-keys, [8] comments
 const DEFAULT_COLORS: [&str; 9] = [
     "1;30", // null         — bold dark gray
     "0;39", // false        — default
@@ -111,6 +111,65 @@ enum Ctx {
     Arr,
 }
 
+/// Scans a `// …` line comment; advances `i` past the last character before `\n`.
+fn scan_line_comment<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
+    let start = *i;
+    while *i < bytes.len() && bytes[*i] != b'\n' {
+        *i += 1;
+    }
+    &text[start..*i]
+}
+
+/// Scans a `/* … */` block comment; advances `i` past the closing `*/`.
+fn scan_block_comment<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
+    let start = *i;
+    *i += 2;
+    while *i + 1 < bytes.len() && !(bytes[*i] == b'*' && bytes[*i + 1] == b'/') {
+        *i += 1;
+    }
+    if *i + 1 < bytes.len() {
+        *i += 2; // consume */
+    }
+    &text[start..*i]
+}
+
+/// Scans a `"…"` string literal (with escape handling); advances `i` past the closing `"`.
+fn scan_string<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
+    let start = *i;
+    *i += 1;
+    while *i < bytes.len() {
+        if bytes[*i] == b'\\' {
+            *i += 2; // skip escape sequence
+            continue;
+        }
+        if bytes[*i] == b'"' {
+            *i += 1;
+            break;
+        }
+        *i += 1;
+    }
+    &text[start..*i]
+}
+
+/// Scans a number (`-` or digit prefix); advances `i` past the last numeric character.
+fn scan_number<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
+    let start = *i;
+    *i += 1;
+    while *i < bytes.len() && matches!(bytes[*i], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-') {
+        *i += 1;
+    }
+    &text[start..*i]
+}
+
+/// Scans an alphabetic keyword (`true` / `false` / `null`); advances `i` past the word.
+fn scan_keyword<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
+    let start = *i;
+    while *i < bytes.len() && bytes[*i].is_ascii_alphabetic() {
+        *i += 1;
+    }
+    &text[start..*i]
+}
+
 /// Colorize raw JSONC source text with ANSI codes, preserving comments and whitespace.
 ///
 /// Tokenizes byte-by-byte. Safe for UTF-8 because all JSONC structural bytes are ASCII,
@@ -124,120 +183,87 @@ pub fn colorize_jsonc(text: &str, palette: &Palette) -> String {
     let mut stack: Vec<Ctx> = Vec::new();
 
     while i < len {
-        // Whitespace — pass through unchanged (preserves original indentation)
-        if bytes[i].is_ascii_whitespace() {
-            out.push(bytes[i] as char);
-            i += 1;
-            continue;
-        }
-
-        // Line comment: // … \n
-        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'/' {
-            let start = i;
-            while i < len && bytes[i] != b'\n' {
-                i += 1;
-            }
-            out.push_str(&palette.paint_token(TokenKind::Comment, &text[start..i]));
-            continue;
-        }
-
-        // Block comment: /* … */
-        if i + 1 < len && bytes[i] == b'/' && bytes[i + 1] == b'*' {
-            let start = i;
-            i += 2;
-            while i + 1 < len && !(bytes[i] == b'*' && bytes[i + 1] == b'/') {
-                i += 1;
-            }
-            if i + 1 < len {
-                i += 2;
-            } // consume */
-            out.push_str(&palette.paint_token(TokenKind::Comment, &text[start..i]));
-            continue;
-        }
-
-        // String literal
-        if bytes[i] == b'"' {
-            let start = i;
-            i += 1;
-            while i < len {
-                if bytes[i] == b'\\' {
-                    i += 2;
-                    continue;
-                } // skip escape sequence
-                if bytes[i] == b'"' {
-                    i += 1;
-                    break;
-                }
-                i += 1;
-            }
-            let s = &text[start..i];
-            // Paint as key when the current object context expects a key; otherwise as string.
-            match stack.last() {
-                Some(Ctx::ObjKey) => {
-                    out.push_str(&palette.paint_token(TokenKind::ObjectKey, s));
-                    *stack.last_mut().unwrap() = Ctx::ObjVal;
-                }
-                _ => out.push_str(&palette.paint_token(TokenKind::StringValue, s)),
-            }
-            continue;
-        }
-
-        // Number: starts with '-' or a digit
-        if bytes[i].is_ascii_digit() || bytes[i] == b'-' {
-            let start = i;
-            i += 1;
-            while i < len && matches!(bytes[i], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-') {
-                i += 1;
-            }
-            out.push_str(&palette.paint_token(TokenKind::Number, &text[start..i]));
-            continue;
-        }
-
-        // Keywords: true / false / null
-        if bytes[i].is_ascii_alphabetic() {
-            let start = i;
-            while i < len && bytes[i].is_ascii_alphabetic() {
-                i += 1;
-            }
-            let word = &text[start..i];
-            out.push_str(&match word {
-                "null" => palette.paint_token(TokenKind::Null, word),
-                "false" => palette.paint_token(TokenKind::BoolFalse, word),
-                "true" => palette.paint_token(TokenKind::BoolTrue, word),
-                _ => word.to_string(),
-            });
-            continue;
-        }
-
-        // Structural characters
         match bytes[i] {
+            // Whitespace — pass through unchanged (preserves original indentation)
+            b' ' | b'\t' | b'\n' | b'\r' => {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
+            // Line comment: // … \n
+            b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
+                let token = scan_line_comment(bytes, text, &mut i);
+                out.push_str(&palette.paint_token(TokenKind::Comment, token));
+            }
+            // Block comment: /* … */
+            b'/' if i + 1 < len && bytes[i + 1] == b'*' => {
+                let token = scan_block_comment(bytes, text, &mut i);
+                out.push_str(&palette.paint_token(TokenKind::Comment, token));
+            }
+            // String literal
+            b'"' => {
+                let token = scan_string(bytes, text, &mut i);
+                // Paint as key when the current object context expects a key; otherwise as string.
+                match stack.last() {
+                    Some(Ctx::ObjKey) => {
+                        out.push_str(&palette.paint_token(TokenKind::ObjectKey, token));
+                        *stack.last_mut().unwrap() = Ctx::ObjVal;
+                    }
+                    _ => out.push_str(&palette.paint_token(TokenKind::StringValue, token)),
+                }
+            }
+            // Number: starts with '-' or a digit
+            b'-' | b'0'..=b'9' => {
+                let token = scan_number(bytes, text, &mut i);
+                out.push_str(&palette.paint_token(TokenKind::Number, token));
+            }
+            // Keywords: true / false / null
+            b'a'..=b'z' | b'A'..=b'Z' => {
+                let token = scan_keyword(bytes, text, &mut i);
+                out.push_str(&match token {
+                    "null" => palette.paint_token(TokenKind::Null, token),
+                    "false" => palette.paint_token(TokenKind::BoolFalse, token),
+                    "true" => palette.paint_token(TokenKind::BoolTrue, token),
+                    _ => token.to_string(),
+                });
+            }
+            // Structural characters
             b'{' => {
                 out.push_str(&palette.paint_token(TokenKind::ObjectBrace, "{"));
                 stack.push(Ctx::ObjKey);
+                i += 1;
             }
             b'}' => {
                 out.push_str(&palette.paint_token(TokenKind::ObjectBrace, "}"));
                 stack.pop();
+                i += 1;
             }
             b'[' => {
                 out.push_str(&palette.paint_token(TokenKind::ArrayBracket, "["));
                 stack.push(Ctx::Arr);
+                i += 1;
             }
             b']' => {
                 out.push_str(&palette.paint_token(TokenKind::ArrayBracket, "]"));
                 stack.pop();
+                i += 1;
             }
-            b':' => out.push(':'),
+            b':' => {
+                out.push(':');
+                i += 1;
+            }
             b',' => {
                 out.push(',');
                 // After ',' inside an object, the next string is a key again.
                 if let Some(Ctx::ObjVal) = stack.last() {
                     *stack.last_mut().unwrap() = Ctx::ObjKey;
                 }
+                i += 1;
             }
-            _ => out.push(bytes[i] as char),
+            _ => {
+                out.push(bytes[i] as char);
+                i += 1;
+            }
         }
-        i += 1;
     }
 
     out
