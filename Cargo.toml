@@ -12,7 +12,7 @@ name = "jqc"
 path = "src/main.rs"
 
 [dependencies]
-jsonc-parser = { version = "0.32.3", features = ["cst", "serde_json", "serde"] }
+jsonc-parser = { version = "0.32.4", features = ["cst", "serde_json", "serde"] }
 jaq-core = "3.0.0"
 jaq-json = { version = "2.0.0", features = ["serde"] }
 jaq-std = "3.0.0"
@@ -23,7 +23,7 @@ tempfile = "3.27.0"
 is-terminal = "0.4"
 
 [dev-dependencies]
-assert_cmd = "2.2.1"
+assert_cmd = "2.2.2"
 predicates = "3.1.4"
 
 # The profile that 'dist' will build with
