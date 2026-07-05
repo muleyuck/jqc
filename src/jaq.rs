@@ -11,7 +11,17 @@ type CompileErrors<'a> = Vec<(File<&'a str, ()>, Vec<compile::Error<&'a str>>)>;
 pub fn run(filter_str: &str, text: &str) -> Result<Vec<Val>> {
     let input_val = jsonc_parser::parse_to_serde_value::<Val>(text, &ParseOptions::default())
         .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))?;
+    run_with_input(filter_str, input_val)
+}
 
+/// Apply `filter_str` as a jq filter against `null` as the input value,
+/// without reading or parsing any input text (jq `-n` / `--null-input` behavior).
+pub fn run_null(filter_str: &str) -> Result<Vec<Val>> {
+    run_with_input(filter_str, Val::Null)
+}
+
+/// Compile and run `filter_str` against a pre-built `input_val`.
+fn run_with_input(filter_str: &str, input_val: Val) -> Result<Vec<Val>> {
     let defs = jaq_core::defs()
         .chain(jaq_std::defs())
         .chain(jaq_json::defs());
@@ -114,6 +124,32 @@ mod tests {
 
     fn run_err(filter: &str, input: &str) -> String {
         run(filter, input).unwrap_err().to_string()
+    }
+
+    #[test]
+    fn test_run_null_identity() {
+        let result = run_null(".").unwrap();
+        assert_eq!(result, vec![Val::Null]);
+    }
+
+    #[test]
+    fn test_run_null_constructs_object() {
+        let result = run_null("{a: 1, b: 2}").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].to_string(), r#"{"a":1,"b":2}"#);
+    }
+
+    #[test]
+    fn test_run_null_range_produces_array() {
+        let result = run_null("[range(3)]").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(result[0].to_string(), "[0,1,2]");
+    }
+
+    #[test]
+    fn test_run_null_syntax_error_still_reported() {
+        let err = run_null(".foo[").unwrap_err().to_string();
+        assert!(err.contains("filter syntax error"), "got: {err}");
     }
 
     #[test]

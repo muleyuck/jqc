@@ -22,7 +22,11 @@ struct Cli {
     filter: Option<String>,
 
     /// Input file (reads from stdin if omitted)
-    #[arg(value_name = "FILE", requires = "filter")]
+    #[arg(
+        value_name = "FILE",
+        requires = "filter",
+        conflicts_with = "null_input"
+    )]
     file: Option<PathBuf>,
 
     /// Output strings without quotes (jq -r compatible)
@@ -40,6 +44,10 @@ struct Cli {
     /// Disable color output
     #[arg(short = 'M', long = "monochrome-output")]
     monochrome: bool,
+
+    /// Use null as the input value instead of reading from stdin or a file
+    #[arg(short = 'n', long = "null-input")]
+    null_input: bool,
 }
 
 #[derive(Subcommand, Debug)]
@@ -121,8 +129,13 @@ fn main() -> Result<()> {
         Some(Command::Edit(cmd)) => run_edit(cmd, use_color),
         None => {
             let filter = cli.filter.unwrap_or_else(|| ".".to_string());
-            let text = read_input(cli.file.as_deref())?;
-            for val in jaq::run(&filter, &text)? {
+            let values = if cli.null_input {
+                jaq::run_null(&filter)?
+            } else {
+                let text = read_input(cli.file.as_deref())?;
+                jaq::run(&filter, &text)?
+            };
+            for val in values {
                 print_value(&format!("{val}"), cli.raw, cli.compact, use_color)?;
             }
             Ok(())

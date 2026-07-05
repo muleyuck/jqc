@@ -120,6 +120,105 @@ fn filter_compact_output() {
 }
 
 #[test]
+fn filter_null_input_constructs_object() {
+    jqc()
+        .args(["-n", "{a: 1, b: 2}"])
+        .assert()
+        .success()
+        .stdout("{\n  \"a\": 1,\n  \"b\": 2\n}\n");
+}
+
+#[test]
+fn filter_null_input_range() {
+    jqc()
+        .args(["-n", "[range(5)]"])
+        .assert()
+        .success()
+        .stdout("[\n  0,\n  1,\n  2,\n  3,\n  4\n]\n");
+}
+
+#[test]
+fn filter_null_input_compact() {
+    jqc()
+        .args(["-n", "-c", "{a: 1}"])
+        .assert()
+        .success()
+        .stdout("{\"a\":1}\n");
+}
+
+#[test]
+fn filter_null_input_long_flag() {
+    jqc()
+        .args(["--null-input", "1 + 1"])
+        .assert()
+        .success()
+        .stdout("2\n");
+}
+
+#[test]
+fn filter_null_input_with_file_errors() {
+    jqc()
+        .args(["-n", ".", &fixture("config.jsonc")])
+        .assert()
+        .failure()
+        .stderr(contains("--null-input"));
+}
+
+#[test]
+fn filter_null_input_does_not_read_stdin() {
+    // Must not block/hang or attempt to parse whatever is on stdin.
+    jqc()
+        .args(["-n", "1"])
+        .write_stdin("this is not valid JSON at all {{{")
+        .assert()
+        .success()
+        .stdout("1\n");
+}
+
+#[test]
+fn filter_null_input_raw_output() {
+    jqc()
+        .args(["-n", "-r", "\"hello\""])
+        .assert()
+        .success()
+        .stdout("hello\n");
+}
+
+#[test]
+fn filter_null_input_force_color() {
+    let out = jqc().args(["-n", "-C", "1"]).output().unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(
+        stdout.contains("\u{1b}["),
+        "expected ANSI color codes in output: {stdout:?}"
+    );
+}
+
+#[test]
+fn filter_null_input_monochrome() {
+    jqc()
+        .args(["-n", "-M", "-C", "1"])
+        .assert()
+        .success()
+        .stdout("1\n");
+}
+
+#[test]
+fn filter_null_input_multiple_output_values() {
+    jqc()
+        .args(["-n", "-c", "1,2,3"])
+        .assert()
+        .success()
+        .stdout("1\n2\n3\n");
+}
+
+#[test]
+fn filter_null_input_empty_output() {
+    jqc().args(["-n", "empty"]).assert().success().stdout("");
+}
+
+#[test]
 fn filter_invalid_syntax_error() {
     jqc()
         .args([".foo[", &fixture("config.jsonc")])
