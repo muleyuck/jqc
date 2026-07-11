@@ -593,12 +593,34 @@ fn filter_monochrome_suppresses_color() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn set_nonexistent_key_errors() {
+fn set_creates_nonexistent_key() {
     jqc()
         .args(["set", ".missing", "42", &fixture("config.jsonc")])
         .assert()
-        .failure()
-        .stderr(contains("not found"));
+        .success()
+        .stdout(contains("\"missing\": 42"));
+}
+
+#[test]
+fn set_missing_intermediate_object_errors() {
+    jqc()
+        .args(["set", ".server.missing", "42", &fixture("config.jsonc")])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn set_creates_nonexistent_nested_key() {
+    jqc()
+        .args([
+            "set",
+            ".compilerOptions.newOption",
+            "true",
+            &fixture("tsconfig.jsonc"),
+        ])
+        .assert()
+        .success()
+        .stdout(contains("\"newOption\": true"));
 }
 
 #[test]

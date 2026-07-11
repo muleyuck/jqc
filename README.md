@@ -61,6 +61,7 @@ cat config.jsonc | jqc '.host'
 |------|----------|
 | `-r` | Raw output — strips surrounding quotes from strings |
 | `-c` | Compact output — no newlines |
+| `-n` | Null input — use `null` as the input instead of reading stdin or a file; cannot be combined with a FILE argument |
 
 > `jqc` uses [jaq](https://github.com/01mf02/jaq) as its filter engine. The vast majority of `jq` filters work without modification. For known differences, see the [jaq compatibility notes](https://github.com/01mf02/jaq?tab=readme-ov-file#differences-from-jq).
 
@@ -126,7 +127,7 @@ Before                              After: jqc set '.port' 8080 -i config.jsonc
 
 Without `-i`, the result is printed to stdout. Add `-i` to overwrite the file atomically.
 
-### `set` — update a value
+### `set` — update or create a key
 
 ```bash
 jqc set '.port' 8080 config.jsonc                       # print to stdout
@@ -135,7 +136,11 @@ jqc set '.port' 8080 -i config.jsonc                    # edit in-place
 jqc set '.host' '"production.example.com"' config.jsonc # string value
 jqc set '.compilerOptions.strict' 'false' tsconfig.json # boolean
 jqc set '.compilerOptions.target' '"ES2022"' tsconfig.json
+
+jqc set '.timeout' 30 config.jsonc                      # creates the key if it doesn't exist yet
 ```
+
+If the target key doesn't exist, `set` creates it (the parent object must already exist — `jqc set '.server.timeout' 30` fails if `.server` is missing).
 
 ### `del` — remove a key
 
