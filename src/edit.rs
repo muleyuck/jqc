@@ -150,6 +150,7 @@ fn replace_cst_node(node: CstNode, value: CstInputValue) -> Result<()> {
 }
 
 /// Replace the value at `path_expr` with `new_value_str` (JSON-encoded).
+/// If the final path segment is an object key that does not exist yet, it is created.
 /// Returns the modified JSONC text with all comments preserved.
 pub fn set(text: &str, path_expr: &str, new_value_str: &str) -> Result<String> {
     let new_val: serde_json::Value = serde_json::from_str(new_value_str)
@@ -158,8 +159,36 @@ pub fn set(text: &str, path_expr: &str, new_value_str: &str) -> Result<String> {
 
     let segments = resolve_path(path_expr, text)?;
     let root = parse_cst(text)?;
-    let target = navigate(&root, &segments)?;
-    replace_cst_node(target, cst_val)?;
+
+    let Some((last, parent_segments)) = segments.split_last() else {
+        let target = navigate(&root, &segments)?;
+        replace_cst_node(target, cst_val)?;
+        return Ok(format!("{root}"));
+    };
+
+    let PathSegment::Key(key) = last else {
+        // Array-index paths are unaffected by key-creation support; delegate to
+        // navigate() so bounds/type-mismatch errors stay segment-precise.
+        let target = navigate(&root, &segments)?;
+        replace_cst_node(target, cst_val)?;
+        return Ok(format!("{root}"));
+    };
+
+    let parent = navigate(&root, parent_segments)?;
+    let obj = parent.as_object().ok_or_else(|| {
+        anyhow!(
+            "expected object at segment {} (key={key:?}), got: {parent}",
+            parent_segments.len()
+        )
+    })?;
+
+    match obj.get(key) {
+        Some(prop) => prop.set_value(cst_val),
+        None => {
+            obj.append(key, cst_val);
+        }
+    }
+
     Ok(format!("{root}"))
 }
 
@@ -169,19 +198,15 @@ pub fn set(text: &str, path_expr: &str, new_value_str: &str) -> Result<String> {
 pub fn del(text: &str, path_expr: &str) -> Result<String> {
     let segments = resolve_path(path_expr, text)?;
 
-    let last = segments.last().ok_or_else(|| anyhow!("path is empty"))?;
+    let Some((last, parent_segments)) = segments.split_last() else {
+        bail!("path is empty");
+    };
     let PathSegment::Key(key) = last else {
         bail!("del only supports object key paths; last segment must be a key, not an index");
     };
 
     let root = parse_cst(text)?;
-
-    let parent_node = if segments.len() == 1 {
-        root.value()
-            .ok_or_else(|| anyhow!("JSONC input is empty"))?
-    } else {
-        navigate(&root, &segments[..segments.len() - 1])?
-    };
+    let parent_node = navigate(&root, parent_segments)?;
 
     let obj = parent_node
         .as_object()
@@ -363,6 +388,63 @@ mod tests {
     #[test]
     fn test_set_invalid_json_error() {
         assert!(set(r#"{"port": 3000}"#, ".port", "not-json").is_err());
+    }
+
+    #[test]
+    fn test_set_creates_missing_top_level_key() {
+        let input = r#"{"port": 3000}"#;
+        let result = set(input, ".newKey", "\"value\"").unwrap();
+        assert!(result.contains("\"newKey\""));
+        assert!(result.contains("\"value\""));
+        assert!(result.contains("\"port\""));
+    }
+
+    #[test]
+    fn test_set_creates_missing_nested_leaf_key() {
+        let input = r#"{"server": {"host": "localhost"}}"#;
+        let result = set(input, ".server.timeout", "30").unwrap();
+        assert!(result.contains("\"timeout\""));
+        assert!(result.contains("30"));
+        assert!(result.contains("\"host\""));
+    }
+
+    #[test]
+    fn test_set_create_missing_key_preserves_comments() {
+        let input = "{\n  // server config\n  \"server\": {\"port\": 3000}\n}";
+        let result = set(input, ".newKey", "\"value\"").unwrap();
+        assert!(
+            result.contains("// server config"),
+            "comment must be preserved"
+        );
+        assert!(result.contains("\"newKey\""));
+    }
+
+    #[test]
+    fn test_set_missing_intermediate_object_error() {
+        assert!(set(r#"{"port": 3000}"#, ".server.timeout", "30").is_err());
+    }
+
+    #[test]
+    fn test_set_array_index_out_of_bounds_error() {
+        assert!(set(r#"{"tags": ["a", "b"]}"#, ".tags[5]", "\"x\"").is_err());
+    }
+
+    #[test]
+    fn test_set_array_type_mismatch_reports_segment() {
+        let err = set(r#"{"a": null}"#, ".a[0]", "1").unwrap_err().to_string();
+        assert!(
+            err.contains("segment"),
+            "error should identify the failing segment: {err}"
+        );
+    }
+
+    #[test]
+    fn test_set_object_type_mismatch_reports_segment() {
+        let err = set(r#"{"a": null}"#, ".a.b", "1").unwrap_err().to_string();
+        assert!(
+            err.contains("segment"),
+            "error should identify the failing segment: {err}"
+        );
     }
 
     #[test]
