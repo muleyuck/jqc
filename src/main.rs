@@ -1,5 +1,6 @@
 mod color;
 mod edit;
+mod edit_detect;
 mod jaq;
 
 use anyhow::{Result, anyhow};
