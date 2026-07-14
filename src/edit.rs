@@ -301,6 +301,10 @@ pub fn apply_assign(text: &str, path_expr: &str, filter_str: &str) -> Result<Str
 /// If a matched path (or any of its ancestors) does not exist, that match
 /// is silently skipped (no-op), matching jq's own `del()` semantics. If
 /// `path_expr` matches nothing at all, `text` is returned unchanged.
+///
+/// A match against the root document itself (e.g. `del(.)`, or the root
+/// path that `del(..)` always includes) collapses the whole document to
+/// `null`, matching jq's own `del`/`delpaths` semantics.
 pub fn del(text: &str, path_expr: &str) -> Result<String> {
     let mut matches = resolve_path(path_expr, text)?;
     if matches.is_empty() {
@@ -311,7 +315,11 @@ pub fn del(text: &str, path_expr: &str) -> Result<String> {
     let root = parse_cst(text)?;
     for segments in matches {
         let Some((last, parent_segments)) = segments.split_last() else {
-            bail!("path is empty");
+            let Ok(target) = navigate(&root, &segments) else {
+                continue; // no-op: root has no value (e.g. empty document)
+            };
+            write_cst_value(&target, serde_json::Value::Null)?;
+            continue;
         };
         let Ok(parent_node) = navigate(&root, parent_segments) else {
             continue; // an ancestor is missing: no-op for this match
@@ -750,5 +758,22 @@ mod tests {
         let input = r#"{"tags": []}"#;
         let result = del(input, ".tags[]").unwrap();
         assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_del_root_becomes_null() {
+        let input = r#"{"a": 1}"#;
+        let result = del(input, ".").unwrap();
+        assert_eq!(result, "null");
+    }
+
+    #[test]
+    fn test_del_recursive_descent_collapses_root_to_null() {
+        // `..` always includes the root path; jq's `del(..)` collapses the
+        // whole document to `null` rather than erroring or deleting
+        // piecemeal.
+        let input = r#"{"a": {"b": 1}}"#;
+        let result = del(input, "..").unwrap();
+        assert_eq!(result, "null");
     }
 }
