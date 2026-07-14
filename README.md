@@ -111,10 +111,10 @@ jqc fmt tsconfig.json > /dev/null && echo "valid"
 
 ## 3. Edit while preserving comments
 
-`set`, `del`, and `push` rewrite the JSONC source text directly. Only the targeted value changes — all comments, including inline comments on the same line as the edited value, are left untouched.
+`jqc` recognizes jq's own assignment and `del` syntax as an edit expression and rewrites the JSONC source text directly — no separate subcommand needed. Only the targeted value changes — all comments, including inline comments on the same line as the edited value, are left untouched.
 
 ```
-Before                              After: jqc set '.port' 8080 -i config.jsonc
+Before                              After: jqc '.port = 8080' -i config.jsonc
 ──────────────────────────────────  ──────────────────────────────────────────────
 {                                   {
   // Server settings                  // Server settings
@@ -127,34 +127,36 @@ Before                              After: jqc set '.port' 8080 -i config.jsonc
 
 Without `-i`, the result is printed to stdout. Add `-i` to overwrite the file atomically.
 
-### `set` — update or create a key
+### Assignment — update or create a key
+
+All of jq's assignment operators are supported: `=`, `|=`, `+=`, `-=`, `*=`, `/=`, `%=`, `//=`. The right-hand side is evaluated as a full jq filter expression.
 
 ```bash
-jqc set '.port' 8080 config.jsonc                       # print to stdout
-jqc set '.port' 8080 -i config.jsonc                    # edit in-place
+jqc '.port = 8080' config.jsonc                        # print to stdout
+jqc '.port = 8080' -i config.jsonc                      # edit in-place
 
-jqc set '.host' '"production.example.com"' config.jsonc # string value
-jqc set '.compilerOptions.strict' 'false' tsconfig.json # boolean
-jqc set '.compilerOptions.target' '"ES2022"' tsconfig.json
+jqc '.host = "production.example.com"' config.jsonc     # string value
+jqc '.compilerOptions.strict = false' tsconfig.json     # boolean
+jqc '.compilerOptions.target = "ES2022"' tsconfig.json
 
-jqc set '.timeout' 30 config.jsonc                      # creates the key if it doesn't exist yet
+jqc '.timeout = 30' config.jsonc                        # creates the key if it doesn't exist yet
+
+jqc '.count |= . + 1' config.jsonc                       # update relative to the current value
+jqc '.plugins += ["logging"]' config.jsonc               # append to an array
+jqc '.items[] += 1' config.jsonc                         # bulk-apply across every matched path
 ```
 
-If the target key doesn't exist, `set` creates it (the parent object must already exist — `jqc set '.server.timeout' 30` fails if `.server` is missing).
+If the target key doesn't exist, the assignment creates it (the parent object must already exist — `jqc '.server.timeout = 30'` fails if `.server` is missing).
 
-### `del` — remove a key
+### `del(...)` — remove a value
 
 ```bash
-jqc del '.debug' config.jsonc
-jqc del '.compilerOptions.noImplicitAny' -i tsconfig.json
+jqc 'del(.debug)' config.jsonc
+jqc 'del(.compilerOptions.noImplicitAny)' -i tsconfig.json
+jqc 'del(.tags[0])' config.jsonc
 ```
 
-### `push` — append to an array
-
-```bash
-jqc push '.plugins' '"logging"' config.jsonc
-jqc push '.lint.rules.tags' '"strict"' -i deno.jsonc
-```
+`del()` takes a single path expression (it does not accept jq's comma-separated multi-argument form, e.g. `del(.a, .b)`). If the path matches nothing, or an ancestor is missing, it's a no-op.
 
 ---
 
