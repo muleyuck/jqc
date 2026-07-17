@@ -228,13 +228,13 @@ fn filter_invalid_syntax_error() {
 }
 
 // ---------------------------------------------------------------------------
-// set
+// Assign-family operators (=, |=, +=, -=, *=, /=, %=, //=)
 // ---------------------------------------------------------------------------
 
 #[test]
-fn set_number_preserves_comments() {
+fn assign_number_preserves_comments() {
     let out = jqc()
-        .args(["set", ".port", "8080", &fixture("config.jsonc")])
+        .args([".port = 8080", &fixture("config.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -251,9 +251,9 @@ fn set_number_preserves_comments() {
 }
 
 #[test]
-fn set_string_value() {
+fn assign_string_value() {
     let out = jqc()
-        .args(["set", ".host", "\"production\"", &fixture("config.jsonc")])
+        .args([".host = \"production\"", &fixture("config.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -265,9 +265,9 @@ fn set_string_value() {
 }
 
 #[test]
-fn set_nested_path() {
+fn assign_nested_path() {
     jqc()
-        .args(["set", ".server.port", "9090"])
+        .args([".server.port = 9090"])
         .write_stdin(r#"{"server": {"port": 3000}}"#)
         .assert()
         .success()
@@ -275,13 +275,64 @@ fn set_nested_path() {
 }
 
 #[test]
-fn set_in_place() {
+fn assign_update_operator_uses_current_value() {
+    // |= : the RHS filter runs against the current value at the path
+    jqc()
+        .args([".port |= . + 1"])
+        .write_stdin(r#"{"port": 3000}"#)
+        .assert()
+        .success()
+        .stdout(contains("3001"));
+}
+
+#[test]
+fn assign_update_math_operator() {
+    jqc()
+        .args([".port += 1"])
+        .write_stdin(r#"{"port": 3000}"#)
+        .assert()
+        .success()
+        .stdout(contains("3001"));
+}
+
+#[test]
+fn assign_update_alt_operator_replaces_only_when_falsy() {
+    jqc()
+        .args([".debug //= true"])
+        .write_stdin(r#"{"debug": false}"#)
+        .assert()
+        .success()
+        .stdout(contains("true"));
+}
+
+#[test]
+fn assign_plus_equals_appends_to_array() {
+    // += replaces the old dedicated `push` command for appending to arrays
+    let out = jqc()
+        .args([".plugins += [\"logging\"]", &fixture("config.jsonc")])
+        .output()
+        .unwrap();
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(out.status.success());
+    assert!(
+        stdout.contains("\"logging\""),
+        "value not appended: {stdout}"
+    );
+    assert!(stdout.contains("\"core\""), "existing value lost: {stdout}");
+    assert!(
+        stdout.contains("// Server settings"),
+        "comment lost: {stdout}"
+    );
+}
+
+#[test]
+fn assign_in_place() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("config.jsonc");
     fs::copy(fixture("config.jsonc"), &path).unwrap();
 
     jqc()
-        .args(["set", ".port", "9090", "-i", path.to_str().unwrap()])
+        .args([".port = 9090", "-i", path.to_str().unwrap()])
         .assert()
         .success();
 
@@ -297,9 +348,9 @@ fn set_in_place() {
 }
 
 #[test]
-fn set_in_place_requires_file() {
+fn assign_in_place_requires_file() {
     jqc()
-        .args(["set", ".port", "9090", "-i"])
+        .args([".port = 9090", "-i"])
         .write_stdin(r#"{"port": 3000}"#)
         .assert()
         .failure()
@@ -307,21 +358,51 @@ fn set_in_place_requires_file() {
 }
 
 #[test]
-fn set_invalid_json_value_errors() {
+fn assign_in_place_with_read_only_filter_errors() {
     jqc()
-        .args(["set", ".port", "not-json", &fixture("config.jsonc")])
+        .args([".port", "-i"])
+        .write_stdin(r#"{"port": 3000}"#)
+        .assert()
+        .failure()
+        .stderr(contains("--in-place requires an edit expression"));
+}
+
+#[test]
+fn assign_multi_path_bulk_update() {
+    jqc()
+        .args([".tags[] += \"!\""])
+        .write_stdin(r#"{"tags": ["a", "b"]}"#)
+        .assert()
+        .success()
+        .stdout(contains("\"a!\""))
+        .stdout(contains("\"b!\""));
+}
+
+#[test]
+fn assign_creates_nonexistent_key() {
+    jqc()
+        .args([".missing = 42", &fixture("config.jsonc")])
+        .assert()
+        .success()
+        .stdout(contains("\"missing\": 42"));
+}
+
+#[test]
+fn assign_missing_intermediate_object_errors() {
+    jqc()
+        .args([".server.missing = 42", &fixture("config.jsonc")])
         .assert()
         .failure();
 }
 
 // ---------------------------------------------------------------------------
-// del
+// del(...)
 // ---------------------------------------------------------------------------
 
 #[test]
 fn del_removes_key_and_preserves_other_comments() {
     let out = jqc()
-        .args(["del", ".debug", &fixture("config.jsonc")])
+        .args(["del(.debug)", &fixture("config.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -344,7 +425,7 @@ fn del_in_place() {
     fs::copy(fixture("config.jsonc"), &path).unwrap();
 
     jqc()
-        .args(["del", ".debug", "-i", path.to_str().unwrap()])
+        .args(["del(.debug)", "-i", path.to_str().unwrap()])
         .assert()
         .success();
 
@@ -359,57 +440,39 @@ fn del_in_place() {
     );
 }
 
-// ---------------------------------------------------------------------------
-// push
-// ---------------------------------------------------------------------------
+#[test]
+fn del_in_place_requires_file() {
+    jqc()
+        .args(["del(.debug)", "-i"])
+        .write_stdin(r#"{"debug": false}"#)
+        .assert()
+        .failure()
+        .stderr(contains("--in-place requires a file"));
+}
 
 #[test]
-fn push_appends_to_array_and_preserves_comments() {
+fn del_array_element() {
+    jqc()
+        .args(["del(.tags[0])"])
+        .write_stdin(r#"{"tags": ["a", "b"]}"#)
+        .assert()
+        .success()
+        .stdout(contains("\"b\""));
+}
+
+#[test]
+fn del_nonexistent_key_is_noop() {
     let out = jqc()
-        .args(["push", ".plugins", "\"logging\"", &fixture("config.jsonc")])
+        .args(["del(.missing)", &fixture("config.jsonc")])
         .output()
         .unwrap();
-    let stdout = String::from_utf8(out.stdout).unwrap();
     assert!(out.status.success());
-    assert!(
-        stdout.contains("\"logging\""),
-        "value not appended: {stdout}"
-    );
-    assert!(stdout.contains("\"core\""), "existing value lost: {stdout}");
-    assert!(
-        stdout.contains("// Server settings"),
-        "comment lost: {stdout}"
-    );
 }
 
 #[test]
-fn push_in_place() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("config.jsonc");
-    fs::copy(fixture("config.jsonc"), &path).unwrap();
-
+fn del_multiple_args_errors() {
     jqc()
-        .args([
-            "push",
-            ".plugins",
-            "\"logging\"",
-            "-i",
-            path.to_str().unwrap(),
-        ])
-        .assert()
-        .success();
-
-    let content = fs::read_to_string(&path).unwrap();
-    assert!(
-        content.contains("\"logging\""),
-        "value not appended in-place: {content}"
-    );
-}
-
-#[test]
-fn push_to_non_array_errors() {
-    jqc()
-        .args(["push", ".port", "1", &fixture("config.jsonc")])
+        .args(["del(.debug, .host)", &fixture("config.jsonc")])
         .assert()
         .failure();
 }
@@ -453,12 +516,10 @@ fn vscode_filter_tab_size() {
 }
 
 #[test]
-fn vscode_set_tab_size_preserves_comments() {
+fn vscode_assign_tab_size_preserves_comments() {
     let out = jqc()
         .args([
-            "set",
-            r#"."editor.tabSize""#,
-            "4",
+            r#"."editor.tabSize" = 4"#,
             &fixture("vscode-settings.jsonc"),
         ])
         .output()
@@ -490,12 +551,10 @@ fn tsconfig_filter_nested_target() {
 }
 
 #[test]
-fn tsconfig_set_strict_preserves_inline_comment() {
+fn tsconfig_assign_strict_preserves_inline_comment() {
     let out = jqc()
         .args([
-            "set",
-            ".compilerOptions.strict",
-            "false",
+            ".compilerOptions.strict = false",
             &fixture("tsconfig.jsonc"),
         ])
         .output()
@@ -527,14 +586,9 @@ fn deno_filter_version() {
 }
 
 #[test]
-fn deno_push_lint_tag_preserves_comments() {
+fn deno_assign_plus_equals_lint_tag_preserves_comments() {
     let out = jqc()
-        .args([
-            "push",
-            ".lint.rules.tags",
-            "\"strict\"",
-            &fixture("deno.jsonc"),
-        ])
+        .args([".lint.rules.tags += [\"strict\"]", &fixture("deno.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -593,29 +647,10 @@ fn filter_monochrome_suppresses_color() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn set_creates_nonexistent_key() {
-    jqc()
-        .args(["set", ".missing", "42", &fixture("config.jsonc")])
-        .assert()
-        .success()
-        .stdout(contains("\"missing\": 42"));
-}
-
-#[test]
-fn set_missing_intermediate_object_errors() {
-    jqc()
-        .args(["set", ".server.missing", "42", &fixture("config.jsonc")])
-        .assert()
-        .failure();
-}
-
-#[test]
-fn set_creates_nonexistent_nested_key() {
+fn assign_creates_nonexistent_nested_key() {
     jqc()
         .args([
-            "set",
-            ".compilerOptions.newOption",
-            "true",
+            ".compilerOptions.newOption = true",
             &fixture("tsconfig.jsonc"),
         ])
         .assert()
@@ -624,29 +659,19 @@ fn set_creates_nonexistent_nested_key() {
 }
 
 #[test]
-fn del_in_place_requires_file() {
+fn del_nonexistent_key_via_stdin_is_noop() {
     jqc()
-        .args(["del", ".debug", "-i"])
-        .write_stdin(r#"{"debug": false}"#)
+        .args(["del(.missing)"])
+        .write_stdin(r#"{"port": 3000}"#)
         .assert()
-        .failure()
-        .stderr(contains("--in-place requires a file"));
-}
-
-#[test]
-fn del_nonexistent_key_errors() {
-    jqc()
-        .args(["del", ".missing", &fixture("config.jsonc")])
-        .assert()
-        .failure()
-        .stderr(contains("not found"));
+        .success();
 }
 
 #[test]
 fn del_preserves_adjacent_block_comment() {
     // /* Feature flags */ sits above "debug"; deleting "debug" must keep the block comment
     let out = jqc()
-        .args(["del", ".debug", &fixture("config.jsonc")])
+        .args(["del(.debug)", &fixture("config.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -655,16 +680,6 @@ fn del_preserves_adjacent_block_comment() {
         stdout.contains("/* Feature flags */"),
         "block comment lost: {stdout}"
     );
-}
-
-#[test]
-fn push_in_place_requires_file() {
-    jqc()
-        .args(["push", ".plugins", "\"logging\"", "-i"])
-        .write_stdin(r#"{"plugins": []}"#)
-        .assert()
-        .failure()
-        .stderr(contains("--in-place requires a file"));
 }
 
 #[test]
@@ -821,9 +836,9 @@ fn fmt_preserves_inline_block_comment_between_key_and_value() {
 }
 
 #[test]
-fn push_preserves_comment_between_array_elements() {
+fn assign_plus_equals_preserves_comment_between_array_elements() {
     let out = jqc()
-        .args(["push", ".tags", "\"delta\"", &fixture("tricky.jsonc")])
+        .args([".tags += [\"delta\"]", &fixture("tricky.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -834,11 +849,11 @@ fn push_preserves_comment_between_array_elements() {
     );
     assert!(
         stdout.contains("/* comment between elements */"),
-        "inter-element comment lost after push: {stdout}"
+        "inter-element comment lost after append: {stdout}"
     );
     assert!(
         stdout.contains("// comment before first element"),
-        "pre-element comment lost after push: {stdout}"
+        "pre-element comment lost after append: {stdout}"
     );
 }
 

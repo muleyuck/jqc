@@ -1,5 +1,6 @@
 mod color;
 mod edit;
+mod edit_detect;
 mod jaq;
 
 use anyhow::{Result, anyhow};
@@ -48,53 +49,17 @@ struct Cli {
     /// Use null as the input value instead of reading from stdin or a file
     #[arg(short = 'n', long = "null-input")]
     null_input: bool,
+
+    /// Edit the file in-place (only valid when the filter is an edit
+    /// expression such as `.a = 1` or `del(.a)`)
+    #[arg(short = 'i', long = "in-place", conflicts_with = "null_input")]
+    in_place: bool,
 }
 
 #[derive(Subcommand, Debug)]
 enum Command {
-    /// Edit commands (set / del / push) — flattened so they appear as top-level subcommands
-    #[command(flatten)]
-    Edit(EditCommand),
     /// Validate and output JSONC, preserving comments
     Fmt {
-        /// Input file (reads from stdin if omitted)
-        file: Option<PathBuf>,
-        /// Edit the file in-place
-        #[arg(short = 'i', long = "in-place")]
-        in_place: bool,
-    },
-}
-
-#[derive(Subcommand, Debug)]
-enum EditCommand {
-    /// Set a value at the given path (comment-preserving)
-    Set {
-        /// jq-style path (e.g. .server.port)
-        path: String,
-        /// New value (JSON-encoded, e.g. 8080 or '"hello"')
-        value: String,
-        /// Input file (reads from stdin if omitted)
-        file: Option<PathBuf>,
-        /// Edit the file in-place
-        #[arg(short = 'i', long = "in-place")]
-        in_place: bool,
-    },
-    /// Delete an object key at the given path (comment-preserving)
-    Del {
-        /// jq-style path (e.g. .debug)
-        path: String,
-        /// Input file (reads from stdin if omitted)
-        file: Option<PathBuf>,
-        /// Edit the file in-place
-        #[arg(short = 'i', long = "in-place")]
-        in_place: bool,
-    },
-    /// Append a value to the array at the given path (comment-preserving)
-    Push {
-        /// jq-style path (e.g. .plugins)
-        path: String,
-        /// Value to append (JSON-encoded)
-        value: String,
         /// Input file (reads from stdin if omitted)
         file: Option<PathBuf>,
         /// Edit the file in-place
@@ -126,20 +91,54 @@ fn main() -> Result<()> {
                 Ok(())
             }
         }
-        Some(Command::Edit(cmd)) => run_edit(cmd, use_color),
         None => {
             let filter = cli.filter.unwrap_or_else(|| ".".to_string());
-            let values = if cli.null_input {
-                jaq::run_null(&filter)?
-            } else {
-                let text = read_input(cli.file.as_deref())?;
-                jaq::run(&filter, &text)?
-            };
-            for val in values {
-                print_value(&format!("{val}"), cli.raw, cli.compact, use_color)?;
+            match edit_detect::detect(&filter)? {
+                Some(form) => run_edit_form(form, &filter, cli.file, cli.in_place, use_color),
+                None => {
+                    if cli.in_place {
+                        anyhow::bail!(
+                            "--in-place requires an edit expression (e.g. '.a = 1' or 'del(.a)'), not a read-only filter"
+                        );
+                    }
+                    let values = if cli.null_input {
+                        jaq::run_null(&filter)?
+                    } else {
+                        let text = read_input(cli.file.as_deref())?;
+                        jaq::run(&filter, &text)?
+                    };
+                    for val in values {
+                        print_value(&format!("{val}"), cli.raw, cli.compact, use_color)?;
+                    }
+                    Ok(())
+                }
             }
-            Ok(())
         }
+    }
+}
+
+fn run_edit_form(
+    form: edit_detect::EditForm<'_>,
+    filter: &str,
+    file: Option<PathBuf>,
+    in_place: bool,
+    use_color: bool,
+) -> Result<()> {
+    if in_place && file.is_none() {
+        anyhow::bail!("--in-place requires a file argument");
+    }
+    let text = read_input(file.as_deref())?;
+    let result = match form {
+        edit_detect::EditForm::Assign { lhs } => edit::apply_assign(&text, lhs, filter)?,
+        edit_detect::EditForm::Del { path } => edit::del(&text, path)?,
+    };
+    if in_place {
+        write_output(&result, file.as_deref())
+    } else if use_color {
+        print_colored(&result);
+        Ok(())
+    } else {
+        write_output(&result, None)
     }
 }
 
@@ -182,53 +181,6 @@ fn print_value(output: &str, raw: bool, compact: bool, use_color: bool) -> Resul
         }
     }
     Ok(())
-}
-
-fn run_edit(cmd: EditCommand, use_color: bool) -> Result<()> {
-    match cmd {
-        EditCommand::Set {
-            path,
-            value,
-            file,
-            in_place,
-        } => run_edit_op(file, in_place, use_color, |text| {
-            edit::set(text, &path, &value)
-        }),
-        EditCommand::Del {
-            path,
-            file,
-            in_place,
-        } => run_edit_op(file, in_place, use_color, |text| edit::del(text, &path)),
-        EditCommand::Push {
-            path,
-            value,
-            file,
-            in_place,
-        } => run_edit_op(file, in_place, use_color, |text| {
-            edit::push(text, &path, &value)
-        }),
-    }
-}
-
-fn run_edit_op(
-    file: Option<PathBuf>,
-    in_place: bool,
-    use_color: bool,
-    op: impl FnOnce(&str) -> Result<String>,
-) -> Result<()> {
-    if in_place && file.is_none() {
-        anyhow::bail!("--in-place requires a file argument");
-    }
-    let text = read_input(file.as_deref())?;
-    let result = op(&text)?;
-    if in_place {
-        write_output(&result, file.as_deref())
-    } else if use_color {
-        print_colored(&result);
-        Ok(())
-    } else {
-        write_output(&result, None)
-    }
 }
 
 /// Write `content` to `file` in-place (atomic via temp file), or to stdout if `file` is None.
