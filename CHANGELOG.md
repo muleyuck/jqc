@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.2.0](https://github.com/muleyuck/jqc/compare/v0.1.0...v0.2.0) (2026-07-17)
+
+
+### ⚠ BREAKING CHANGES
+
+* replace set/del/push subcommands with jq assignment operator syntax ([#19](https://github.com/muleyuck/jqc/issues/19))
+
+### Features
+
+* add --null-input / -n flag to run filters without reading input ([f2d3c8a](https://github.com/muleyuck/jqc/commit/f2d3c8a2d402ddc8b28843ede2789b18e4cc0182))
+* add --null-input / -n flag to run filters without reading input ([e1a961b](https://github.com/muleyuck/jqc/commit/e1a961bc360a38e08fc5e8ca6d7488ece0d41fcd))
+* allow `set` to create a new key if it doesn't already exist ([#18](https://github.com/muleyuck/jqc/issues/18)) ([b889fa0](https://github.com/muleyuck/jqc/commit/b889fa0e41cd3dff99bdd39ae92727533817802d))
+* replace set/del/push subcommands with jq assignment operator syntax ([#19](https://github.com/muleyuck/jqc/issues/19)) ([a49ae03](https://github.com/muleyuck/jqc/commit/a49ae0370b8a4f063df74ae0bfdc8e17c1b2bcb7))
+
 ## [0.1.0](https://github.com/muleyuck/jqc/releases/tag/jqc-v0.1.0) (2026-05-06)
 
 
