@@ -1,4 +1,4 @@
 [tools]
-rust = "1.90.0"
+rust = { version = "1.90.0", components = ["clippy", "rustfmt"] }
 prek = "0.3.3"
 "cargo:cargo-dist" = "0.31.0"
