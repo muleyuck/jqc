@@ -6,20 +6,9 @@ on:
   pull_request:
     branches:
       - main
+permissions: {}
 jobs:
   unit-test:
-    name: Lint Build Test
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v7
-      - uses: actions/cache@v6
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-      - name: Build
-        run: cargo build --release --verbose
-      - name: Run Lint and Test
-        run: make
+    permissions:
+      contents: read
+    uses: muleyuck/github-actions/.github/workflows/ci-rust.yml@v1

@@ -11,7 +11,11 @@ permissions: {}
 
 jobs:
   mark-tagged:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
+    # Release also runs on pull_request, so without the event check this fires
+    # on every pull request, including ones opened from a fork.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push' }}
     runs-on: ubuntu-latest
     permissions:
       pull-requests: write
@@ -20,7 +24,7 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --state merged --label "autorelease: pending" --json number --jq '.[0].number')
+          PR=$(gh pr list --repo "$GITHUB_REPOSITORY" --state merged --label "autorelease: pending" --json number --jq '.[0].number // empty')
           if [ -n "$PR" ]; then
             gh pr edit "$PR" --repo "$GITHUB_REPOSITORY" --remove-label "autorelease: pending" --add-label "autorelease: tagged"
           fi

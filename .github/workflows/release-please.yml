@@ -13,14 +13,12 @@ permissions: {}
 
 jobs:
   release-please:
-    if: ${{ github.event.workflow_run.conclusion == 'success' }}
-    runs-on: ubuntu-latest
+    # The branches filter matches the branch of the triggering run, so a fork
+    # whose head branch is called main would otherwise reach this job.
+    if: >-
+      ${{ github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push' }}
     permissions:
       contents: write
       pull-requests: write
-    steps:
-      - uses: googleapis/release-please-action@45996ed1f6d02564a971a2fa1b5860e934307cf7 # v5.0.0
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          config-file: .github/release-please-config.json
-          manifest-file: .github/.release-please-manifest.json
+    uses: muleyuck/github-actions/.github/workflows/release-please.yml@v1
