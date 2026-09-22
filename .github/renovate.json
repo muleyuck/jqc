@@ -8,7 +8,7 @@
   "automergeType": "pr",
   "automergeStrategy": "squash",
   "dependencyDashboard": true,
-  "ignorePaths": [".github/workflows/release.yml"],
+  "ignorePaths": [".github/workflows/release.yml", "tests/fixtures/**"],
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["on saturday"]
