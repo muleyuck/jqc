@@ -1,0 +1,45 @@
+{
+  "$schema": "https://docs.renovatebot.com/renovate-schema.json",
+  "timezone": "Asia/Tokyo",
+  "schedule": ["on saturday"],
+  "reviewers": ["muleyuck"],
+  "prConcurrentLimit": 10,
+  "semanticCommits": "enabled",
+  "automergeType": "pr",
+  "automergeStrategy": "squash",
+  "dependencyDashboard": true,
+  "ignorePaths": [".github/workflows/release.yml"],
+  "lockFileMaintenance": {
+    "enabled": true,
+    "schedule": ["on saturday"]
+  },
+  "customManagers": [
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^dist-workspace\\.toml$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\s*\\n\\s*cargo-dist-version\\s*=\\s*\"(?<currentValue>[\\w.-]+)\""],
+      "versioningTemplate": "semver"
+    }
+  ],
+  "packageRules": [
+    { "matchManagers": ["github-actions"], "groupName": "github-actions dependencies" },
+    { "matchManagers": ["github-actions"], "matchUpdateTypes": ["patch", "minor", "digest"], "automerge": true },
+
+    { "matchManagers": ["cargo"], "matchUpdateTypes": ["major"], "enabled": false },
+
+    { "matchManagers": ["cargo"], "matchPackageNames": ["jaq-core", "jaq-json", "jaq-std"], "groupName": "jaq" },
+
+    { "matchManagers": ["cargo"], "matchDepTypes": ["dev-dependencies"], "semanticCommitScope": "deps-dev" },
+    { "matchManagers": ["cargo"], "matchDepTypes": ["dev-dependencies"], "matchUpdateTypes": ["patch", "minor"], "automerge": true },
+
+    { "matchManagers": ["mise"], "matchDepNames": ["rust"], "groupName": "rust toolchain", "automerge": false },
+    { "matchManagers": ["mise"], "matchDepNames": ["rust"], "matchUpdateTypes": ["major"], "enabled": false },
+
+    { "matchManagers": ["mise"], "matchDepNames": ["prek"], "matchUpdateTypes": ["patch", "minor"], "automerge": true },
+
+    { "matchManagers": ["mise", "custom.regex"], "matchDepNames": ["cargo:cargo-dist", "cargo-dist"], "groupName": "cargo-dist" },
+    { "matchManagers": ["mise", "custom.regex"], "matchDepNames": ["cargo:cargo-dist", "cargo-dist"], "matchUpdateTypes": ["patch", "minor"], "automerge": true },
+
+    { "matchUpdateTypes": ["lockFileMaintenance"], "automerge": false }
+  ]
+}
