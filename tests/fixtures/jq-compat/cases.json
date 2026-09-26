@@ -29,6 +29,7 @@
     {"name":"update","args":[".a |= . + 1"],"stdin":"{\"a\":1}","compare":"value"},
     {"name":"arithmetic-update","args":[".a += 10"],"stdin":"{\"a\":1}","compare":"value"},
     {"name":"alternative-update","args":[".a //= 3"],"stdin":"{\"a\":null,\"b\":1}","compare":"value"},
+    {"name":"edit-keeps-number-spelling","args":[".b = 1"],"stdin":"{\"a\":1e2,\"b\":0}","compare":"value"},
     {"name":"assign-new-key","args":[".c = true"],"stdin":"{\"a\":1}","compare":"value"},
     {"name":"assign-array-element","args":[".a[1] = 9"],"stdin":"{\"a\":[1,2,3]}","compare":"value"},
     {"name":"update-each","args":[".[] |= . * 2"],"stdin":"{\"x\":1,\"y\":2}","compare":"value"},
