@@ -158,6 +158,20 @@ jqc 'del(.tags[0])' config.jsonc
 
 `del()` takes a single path expression (it does not accept jq's comma-separated multi-argument form, e.g. `del(.a, .b)`). If the path matches nothing, or an ancestor is missing, it's a no-op.
 
+### Duplicate keys
+
+JSONC allows a key to appear more than once in an object. jq keeps the last occurrence and drops the rest from its output. jqc reads values the same way, but it only rewrites the text on the path you edit:
+
+- An edit targets the last occurrence, which is the one jq sees.
+- Earlier occurrences stay in the file along with their comments. jq ignores them when it reads the result, so the values match what jq would output.
+- `del(...)` removes every occurrence of the key, so an earlier value can't resurface.
+- Duplicate keys elsewhere in the document are left alone. jq would drop them from its output.
+
+```bash
+jqc '.port = 8080' <<< '{"port": 3000, "port": 4000}'   # {"port": 3000, "port": 8080}
+jqc 'del(.port)'   <<< '{"port": 3000, "port": 4000}'   # {}
+```
+
 ---
 
 ## Comparison with jq
