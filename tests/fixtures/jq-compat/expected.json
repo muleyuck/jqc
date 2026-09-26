@@ -60,12 +60,24 @@
       "stdout": "[1.5,-0.25,100]\n",
       "status": 0
     },
+    "whole-float-result": {
+      "stdout": "1\n",
+      "status": 0
+    },
+    "exponent-sign": {
+      "stdout": "1e+20\n",
+      "status": 0
+    },
     "nan": {
       "stdout": "null\n",
       "status": 0
     },
     "big-integer": {
       "stdout": "100000000000000000000\n",
+      "status": 0
+    },
+    "big-integer-equality": {
+      "stdout": "false\n",
       "status": 0
     },
     "huge-number": {
@@ -136,6 +148,10 @@
       "stdout": "{\n  \"b\": 0\n}\n",
       "status": 0
     },
+    "big-integer-rewrite": {
+      "stdout": "{\n  \"a\": 100000000000000000001\n}\n",
+      "status": 0
+    },
     "assign-missing-parent": {
       "stdout": "{\n  \"a\": {\n    \"b\": 1\n  }\n}\n",
       "status": 0
@@ -154,6 +170,10 @@
     },
     "del-multiple-paths": {
       "stdout": "{\n  \"c\": 3\n}\n",
+      "status": 0
+    },
+    "assign-multiple-results": {
+      "stdout": "{\n  \"a\": 1\n}\n{\n  \"a\": 2\n}\n",
       "status": 0
     }
   }

@@ -15,8 +15,11 @@
     {"name":"string-escapes","args":["."],"stdin":"{\"s\":\"q\\\" b\\\\ n\\n t\\t\"}"},
     {"name":"unicode-raw-string","args":["-r",".s"],"stdin":"{\"s\":\"日本語\"}"},
     {"name":"decimal-numbers","args":["-c","."],"stdin":"[1.5,-0.25,100]"},
+    {"name":"whole-float-result","args":["-c",".a + 0.5"],"stdin":"{\"a\":0.5}","known_difference":67},
+    {"name":"exponent-sign","args":["-c",". * 1e20"],"stdin":"1","known_difference":67},
     {"name":"nan","args":["-n","-c","nan"],"known_difference":41},
     {"name":"big-integer","args":["."],"stdin":"100000000000000000000","known_difference":42},
+    {"name":"big-integer-equality","args":[". == 100000000000000000000"],"stdin":"100000000000000000001","known_difference":42},
     {"name":"huge-number","args":["."],"stdin":"1e1000","known_difference":43},
     {"name":"runtime-error-status","args":[".a"],"stdin":"1","known_difference":44},
     {"name":"invalid-input-status","args":["."],"stdin":"not json","known_difference":44},
@@ -34,10 +37,12 @@
     {"name":"del-select","args":["del(.[] | select(. == 2))"],"stdin":"[1,2,3,2]","compare":"value"},
     {"name":"duplicate-key-assign","args":[".a = 9"],"stdin":"{\"a\":1,\"a\":2}","compare":"value"},
     {"name":"duplicate-key-del","args":["del(.a)"],"stdin":"{\"a\":1,\"b\":0,\"a\":2}","compare":"value"},
+    {"name":"big-integer-rewrite","args":[".a |= ."],"stdin":"{\"a\":100000000000000000001}","compare":"value","known_difference":42},
     {"name":"assign-missing-parent","args":[".a.b = 1"],"stdin":"{}","compare":"value","known_difference":45},
     {"name":"assign-past-end","args":[".a[1] = 1"],"stdin":"{\"a\":[5]}","compare":"value","known_difference":46},
     {"name":"assign-negative-index","args":[".a[-1] = 0"],"stdin":"{\"a\":[1,2,3]}","compare":"value","known_difference":47},
     {"name":"assign-slice","args":[".a[1:] = []"],"stdin":"{\"a\":[1,2,3]}","compare":"value","known_difference":48},
-    {"name":"del-multiple-paths","args":["del(.a, .b)"],"stdin":"{\"a\":1,\"b\":2,\"c\":3}","compare":"value","known_difference":49}
+    {"name":"del-multiple-paths","args":["del(.a, .b)"],"stdin":"{\"a\":1,\"b\":2,\"c\":3}","compare":"value","known_difference":49},
+    {"name":"assign-multiple-results","args":[".a = (1,2)"],"stdin":"{\"a\":0}","compare":"value","known_difference":66}
   ]
 }
