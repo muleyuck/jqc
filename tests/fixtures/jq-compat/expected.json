@@ -1,0 +1,161 @@
+{
+  "jq_version": "1.8.2",
+  "cases": {
+    "identity-object": {
+      "stdout": "{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}\n",
+      "status": 0
+    },
+    "identity-keeps-key-order": {
+      "stdout": "{\n  \"b\": 1,\n  \"a\": 2\n}\n",
+      "status": 0
+    },
+    "compact-output": {
+      "stdout": "{\"b\":1,\"a\":[1,2]}\n",
+      "status": 0
+    },
+    "raw-output-string": {
+      "stdout": "jqc\n",
+      "status": 0
+    },
+    "raw-output-non-string": {
+      "stdout": "{\n  \"a\": 1\n}\n",
+      "status": 0
+    },
+    "monochrome-output": {
+      "stdout": "{\n  \"a\": 1\n}\n",
+      "status": 0
+    },
+    "null-input-object": {
+      "stdout": "{\"a\":1,\"b\":[2]}\n",
+      "status": 0
+    },
+    "null-input-range": {
+      "stdout": "[0,1,2]\n",
+      "status": 0
+    },
+    "multiple-outputs": {
+      "stdout": "1\n\"two\"\nnull\n",
+      "status": 0
+    },
+    "select-map": {
+      "stdout": "[2,3]\n",
+      "status": 0
+    },
+    "empty-containers": {
+      "stdout": "{\n  \"a\": [],\n  \"b\": {}\n}\n",
+      "status": 0
+    },
+    "nested-pretty": {
+      "stdout": "{\n  \"a\": {\n    \"b\": [\n      1,\n      {\n        \"c\": true\n      }\n    ]\n  }\n}\n",
+      "status": 0
+    },
+    "string-escapes": {
+      "stdout": "{\n  \"s\": \"q\\\" b\\\\ n\\n t\\t\"\n}\n",
+      "status": 0
+    },
+    "unicode-raw-string": {
+      "stdout": "日本語\n",
+      "status": 0
+    },
+    "decimal-numbers": {
+      "stdout": "[1.5,-0.25,100]\n",
+      "status": 0
+    },
+    "nan": {
+      "stdout": "null\n",
+      "status": 0
+    },
+    "big-integer": {
+      "stdout": "100000000000000000000\n",
+      "status": 0
+    },
+    "huge-number": {
+      "stdout": "1E+1000\n",
+      "status": 0
+    },
+    "runtime-error-status": {
+      "stdout": "",
+      "status": 5
+    },
+    "invalid-input-status": {
+      "stdout": "",
+      "status": 5
+    },
+    "multiple-stdin-values": {
+      "stdout": "1\n2\n",
+      "status": 0
+    },
+    "multiple-files": {
+      "stdout": "1\n2\n",
+      "status": 0
+    },
+    "assign": {
+      "stdout": "{\n  \"a\": 5,\n  \"b\": 2\n}\n",
+      "status": 0
+    },
+    "update": {
+      "stdout": "{\n  \"a\": 2\n}\n",
+      "status": 0
+    },
+    "arithmetic-update": {
+      "stdout": "{\n  \"a\": 11\n}\n",
+      "status": 0
+    },
+    "alternative-update": {
+      "stdout": "{\n  \"a\": 3,\n  \"b\": 1\n}\n",
+      "status": 0
+    },
+    "assign-new-key": {
+      "stdout": "{\n  \"a\": 1,\n  \"c\": true\n}\n",
+      "status": 0
+    },
+    "assign-array-element": {
+      "stdout": "{\n  \"a\": [\n    1,\n    9,\n    3\n  ]\n}\n",
+      "status": 0
+    },
+    "update-each": {
+      "stdout": "{\n  \"x\": 2,\n  \"y\": 4\n}\n",
+      "status": 0
+    },
+    "del-key": {
+      "stdout": "{\n  \"b\": 2\n}\n",
+      "status": 0
+    },
+    "del-array-element": {
+      "stdout": "{\n  \"a\": [\n    2\n  ]\n}\n",
+      "status": 0
+    },
+    "del-select": {
+      "stdout": "[\n  1,\n  3\n]\n",
+      "status": 0
+    },
+    "duplicate-key-assign": {
+      "stdout": "{\n  \"a\": 9\n}\n",
+      "status": 0
+    },
+    "duplicate-key-del": {
+      "stdout": "{\n  \"b\": 0\n}\n",
+      "status": 0
+    },
+    "assign-missing-parent": {
+      "stdout": "{\n  \"a\": {\n    \"b\": 1\n  }\n}\n",
+      "status": 0
+    },
+    "assign-past-end": {
+      "stdout": "{\n  \"a\": [\n    5,\n    1\n  ]\n}\n",
+      "status": 0
+    },
+    "assign-negative-index": {
+      "stdout": "{\n  \"a\": [\n    1,\n    2,\n    0\n  ]\n}\n",
+      "status": 0
+    },
+    "assign-slice": {
+      "stdout": "{\n  \"a\": [\n    1\n  ]\n}\n",
+      "status": 0
+    },
+    "del-multiple-paths": {
+      "stdout": "{\n  \"c\": 3\n}\n",
+      "status": 0
+    }
+  }
+}
