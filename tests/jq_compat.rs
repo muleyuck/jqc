@@ -11,7 +11,7 @@ use std::fs;
 use std::path::PathBuf;
 
 const REGENERATE_HINT: &str =
-    "run scripts/jq-compat.sh (needs jq), or take expected.json from the jq-compat CI artifact";
+    "take expected.json from the jq-compat CI artifact, or run scripts/jq-compat.sh (needs jq)";
 
 struct Case {
     name: String,

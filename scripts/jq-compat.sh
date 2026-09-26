@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Regenerates tests/fixtures/jq-compat/expected.json by running every case in
-# cases.json through the jq in PATH. Keep it compatible with bash 3.2 (macOS).
+# cases.json through the jq in PATH.
 set -euo pipefail
 
 if ! command -v jq >/dev/null 2>&1; then

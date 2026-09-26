@@ -12,13 +12,13 @@
    | `args` | yes | Arguments passed unchanged to both jq and jqc |
    | `stdin` | no | Text written to stdin. Empty when omitted |
    | `files` | no | File name → content. The files are created in a temporary directory, and both tools run there |
-   | `compare` | no | `"text"` (default) compares stdout exactly. `"value"` compares stdout as a JSON value; use it for edit expressions, because jqc keeps the source formatting |
+   | `compare` | no | `"text"` (default) compares stdout exactly. `"value"` compares the JSON values in stdout the way jq reads them (numbers by value, as jq's `==` does); use it for edit expressions, because jqc keeps the source formatting |
    | `known_difference` | no | Issue number of a known difference from jq |
 
    Both modes also compare the exit status. stderr is never compared.
 
-2. Regenerate `expected.json` with `scripts/jq-compat.sh`. It needs the jq version pinned as `JQ_VERSION` in `.github/workflows/jq-compat.yml`. Without jq, push the change instead: the `jq-compat` workflow fails and uploads the regenerated file as the `jq-compat-expected` artifact. Download it and commit it here.
-3. Run `cargo test --test jq_compat`. If jqc doesn't match jq yet, open an issue and set its number as the case's `known_difference`.
+2. Push the change. The `jq-compat` workflow fails because `expected.json` has no entry for the new case yet, and it uploads the regenerated file as the `jq-compat-expected` artifact. Download it and commit it here.
+3. Check `cargo test --test jq_compat`, which also runs in CI. If jqc doesn't match jq yet, open an issue and set its number as the case's `known_difference`.
 
 ## Fix a known difference
 
