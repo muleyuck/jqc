@@ -1,0 +1,72 @@
+name: jq-compat
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - "tests/fixtures/jq-compat/**"
+      - "scripts/jq-compat.sh"
+      - ".github/workflows/jq-compat.yml"
+  pull_request:
+    branches:
+      - main
+    paths:
+      - "tests/fixtures/jq-compat/**"
+      - "scripts/jq-compat.sh"
+      - ".github/workflows/jq-compat.yml"
+permissions: {}
+jobs:
+  jq-compat:
+    name: Check recorded jq output
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      # renovate: datasource=github-releases depName=jqlang/jq
+      JQ_VERSION: 1.8.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Install jq
+        run: |
+          mkdir -p "$RUNNER_TEMP/jq"
+          cd "$RUNNER_TEMP/jq"
+          base="https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}"
+          curl -fsSLO "$base/jq-linux-amd64"
+          curl -fsSLO "$base/sha256sum.txt"
+          grep ' jq-linux-amd64$' sha256sum.txt | sha256sum -c -
+          mv jq-linux-amd64 jq
+          chmod +x jq
+          echo "$RUNNER_TEMP/jq" >> "$GITHUB_PATH"
+
+      - name: Check jq version
+        run: test "$(jq --version)" = "jq-${JQ_VERSION}"
+
+      - name: Regenerate expected output
+        run: bash scripts/jq-compat.sh
+
+      - name: Check expected output is up to date
+        run: |
+          file=tests/fixtures/jq-compat/expected.json
+          if ! git diff --exit-code -- "$file"; then
+            {
+              echo "## expected.json is out of date"
+              echo
+              echo "Download the \`jq-compat-expected\` artifact and commit it as \`$file\`, or run \`scripts/jq-compat.sh\` with jq ${JQ_VERSION}."
+              echo
+              echo '```diff'
+              git diff -- "$file"
+              echo '```'
+            } >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+
+      - name: Upload regenerated expected output
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: jq-compat-expected
+          path: tests/fixtures/jq-compat/expected.json
