@@ -2,7 +2,9 @@ use anyhow::{Result, anyhow, bail};
 use jaq_core::ValT;
 use jaq_json::Val;
 use jsonc_parser::ParseOptions;
-use jsonc_parser::cst::{CstContainerNode, CstInputValue, CstLeafNode, CstNode, CstRootNode};
+use jsonc_parser::cst::{
+    CstContainerNode, CstInputValue, CstLeafNode, CstNode, CstObject, CstObjectProp, CstRootNode,
+};
 
 use crate::jaq;
 
@@ -77,6 +79,25 @@ fn sort_paths_for_application(paths: &mut [Vec<PathSegment>]) {
     });
 }
 
+/// In source order; JSONC allows duplicate keys.
+fn object_props_named(obj: &CstObject, key: &str) -> Vec<CstObjectProp> {
+    obj.properties()
+        .into_iter()
+        .filter(|prop| {
+            prop.name()
+                .and_then(|name| name.decoded_value().ok())
+                .as_deref()
+                == Some(key)
+        })
+        .collect()
+}
+
+/// Last match, because jq resolves duplicate keys last-wins while
+/// `CstObject::get` returns the first.
+fn object_get_last(obj: &CstObject, key: &str) -> Option<CstObjectProp> {
+    object_props_named(obj, key).pop()
+}
+
 /// Navigate the CST from the root to the value node indicated by `segments`.
 pub fn navigate(root: &CstRootNode, segments: &[PathSegment]) -> Result<CstNode> {
     let mut current: CstNode = root
@@ -89,8 +110,7 @@ pub fn navigate(root: &CstRootNode, segments: &[PathSegment]) -> Result<CstNode>
                 let obj = current.as_object().ok_or_else(|| {
                     anyhow!("expected object at segment {i} (key={key:?}), got: {current}")
                 })?;
-                current = obj
-                    .get(key)
+                current = object_get_last(&obj, key)
                     .ok_or_else(|| anyhow!("key {key:?} not found at path segment [{i}]"))?
                     .value()
                     .ok_or_else(|| anyhow!("key {key:?} has no value"))?;
@@ -280,7 +300,7 @@ pub fn apply_assign(text: &str, path_expr: &str, filter_str: &str) -> Result<Str
                 parent_segments.len()
             )
         })?;
-        match obj.get(key) {
+        match object_get_last(&obj, key) {
             Some(prop) => {
                 let existing = prop
                     .value()
@@ -329,10 +349,10 @@ pub fn del(text: &str, path_expr: &str) -> Result<String> {
                 let Some(obj) = parent_node.as_object() else {
                     continue;
                 };
-                let Some(prop) = obj.get(key) else {
-                    continue; // no-op: key not found
-                };
-                prop.remove();
+                // jq treats duplicates as one key; any left behind would resurface.
+                for prop in object_props_named(&obj, key) {
+                    prop.remove();
+                }
             }
             PathSegment::Index(idx) => {
                 let Some(arr) = parent_node.as_array() else {
@@ -495,6 +515,15 @@ mod tests {
     }
 
     #[test]
+    fn test_navigate_duplicate_key_resolves_last_occurrence() {
+        let input = r#"{"a": 1, "a": 2}"#;
+        let root = CstRootNode::parse(input, &jsonc_parser::ParseOptions::default()).unwrap();
+        let segs = vec![PathSegment::Key("a".into())];
+        let node = navigate(&root, &segs).unwrap();
+        assert_eq!(node.to_string(), "2");
+    }
+
+    #[test]
     fn test_navigate_empty_segments() {
         // Empty path returns the root value itself
         let root = parse_sample();
@@ -646,6 +675,15 @@ mod tests {
     }
 
     #[test]
+    fn test_apply_assign_duplicate_key_updates_last_occurrence() {
+        // Earlier occurrences are kept on purpose: jq ignores them on read,
+        // and they may carry comments.
+        let input = r#"{"a": 1, "a": 2}"#;
+        let result = apply_assign(input, ".a", ".a = 99").unwrap();
+        assert_eq!(result, r#"{"a": 1, "a": 99}"#);
+    }
+
+    #[test]
     fn test_del_key() {
         let input = r#"{"host": "localhost", "port": 3000}"#;
         let result = del(input, ".port").unwrap();
@@ -758,6 +796,14 @@ mod tests {
         let input = r#"{"tags": []}"#;
         let result = del(input, ".tags[]").unwrap();
         assert_eq!(result, input);
+    }
+
+    #[test]
+    fn test_del_duplicate_key_removes_every_occurrence() {
+        let input = r#"{"a": 1, "keep": 0, "a": 2, "a": 3}"#;
+        let result = del(input, ".a").unwrap();
+        assert!(!result.contains("\"a\""), "a duplicate survived: {result}");
+        assert!(result.contains("\"keep\""), "unrelated key lost: {result}");
     }
 
     #[test]
