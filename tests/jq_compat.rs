@@ -3,9 +3,10 @@
 //
 
 use assert_cmd::Command;
-use jsonc_parser::ParseOptions;
+use jsonc_parser::tokens::Token;
+use jsonc_parser::{JsonValue, ParseOptions, Scanner, ScannerOptions, parse_to_value};
 use serde_json::Value;
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::PathBuf;
 
@@ -48,7 +49,8 @@ fn parse_case(v: &Value) -> Case {
                 .map(|x| x.as_str().map(String::from))
                 .collect::<Option<Vec<_>>>()
         })
-        .unwrap_or_else(|| panic!("case {name:?}: \"args\" must be an array of strings"));
+        .filter(|a| !a.is_empty())
+        .unwrap_or_else(|| panic!("case {name:?}: \"args\" must be a non-empty array of strings"));
     let stdin = match &v["stdin"] {
         Value::Null => String::new(),
         Value::String(s) => s.clone(),
@@ -126,13 +128,117 @@ fn same_result(case: &Case, jq: &Outcome, jqc: &Outcome) -> bool {
     if !case.compare_value {
         return jq.stdout == jqc.stdout;
     }
-    if jq.status != 0 {
-        return true;
+    matches!((json_values(&jq.stdout), json_values(&jqc.stdout)), (Some(a), Some(b)) if a == b)
+}
+
+// jq reads only strict JSON: no comments, trailing commas or other JSONC extensions.
+const STRICT_JSON: ParseOptions = ParseOptions {
+    allow_comments: false,
+    allow_loose_object_property_names: false,
+    allow_trailing_commas: false,
+    allow_missing_commas: false,
+    allow_single_quoted_strings: false,
+    allow_hexadecimal_numbers: false,
+    allow_unary_plus_numbers: false,
+};
+const STRICT_SCANNER: ScannerOptions = ScannerOptions {
+    allow_single_quoted_strings: false,
+    allow_hexadecimal_numbers: false,
+    allow_unary_plus_numbers: false,
+};
+
+#[derive(PartialEq)]
+enum Json {
+    Null,
+    Bool(bool),
+    Number {
+        negative: bool,
+        digits: String,
+        exponent: i128,
+    },
+    String(String),
+    Array(Vec<Json>),
+    Object(HashMap<String, Json>),
+}
+
+// Splits stdout into top-level values with jsonc-parser's scanner, which keeps numbers as
+// text, so values beyond the f64 range or precision survive. A duplicate key keeps its last
+// value, which is how jq reads the duplicates jqc deliberately leaves in place.
+fn json_values(stdout: &str) -> Option<Vec<Json>> {
+    let mut scanner = Scanner::new(stdout, &STRICT_SCANNER);
+    let mut values = Vec::new();
+    let (mut start, mut depth) = (0, 0usize);
+    while let Some(token) = scanner.scan().ok()? {
+        // Without whitespace, `01` or `1true` would split into two valid values.
+        if depth == 0 && !values.is_empty() && start == scanner.token_start() {
+            return None;
+        }
+        match token {
+            Token::OpenBrace | Token::OpenBracket => depth += 1,
+            Token::CloseBrace | Token::CloseBracket => depth = depth.checked_sub(1)?,
+            _ => {}
+        }
+        if depth == 0 {
+            let end = scanner.token_end();
+            let value = parse_to_value(&stdout[start..end], &STRICT_JSON).ok()??;
+            values.push(to_json(value)?);
+            start = end;
+        }
     }
-    let jq_value = serde_json::from_str::<Value>(&jq.stdout);
-    let jqc_value =
-        jsonc_parser::parse_to_serde_value::<Value>(&jqc.stdout, &ParseOptions::default());
-    matches!((jq_value, jqc_value), (Ok(a), Ok(b)) if a == b)
+    (depth == 0).then_some(values)
+}
+
+fn to_json(value: JsonValue<'_>) -> Option<Json> {
+    Some(match value {
+        JsonValue::Null => Json::Null,
+        JsonValue::Boolean(b) => Json::Bool(b),
+        JsonValue::Number(n) => decimal(n)?,
+        JsonValue::String(s) => Json::String(s.into_owned()),
+        JsonValue::Array(a) => Json::Array(a.into_iter().map(to_json).collect::<Option<_>>()?),
+        JsonValue::Object(o) => Json::Object(
+            o.into_iter()
+                .map(|(k, v)| Some((k.into_owned(), to_json(v)?)))
+                .collect::<Option<_>>()?,
+        ),
+    })
+}
+
+// The exact decimal value, which is what jq's `==` compares: 1e2 == 100 and 1.50 == 1.5,
+// with no rounding to f64.
+fn decimal(literal: &str) -> Option<Json> {
+    let (negative, unsigned) = match literal.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, literal),
+    };
+    let (mantissa, exponent) = match unsigned.find(['e', 'E']) {
+        Some(i) => (&unsigned[..i], &unsigned[i + 1..]),
+        None => (unsigned, "0"),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    if int.is_empty() || !int.bytes().chain(frac.bytes()).all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let all = format!("{int}{frac}");
+    let significant = all.trim_end_matches('0');
+    let digits = significant.trim_start_matches('0');
+    // Zero is zero whatever its exponent, so it must not depend on the exponent fitting.
+    if digits.is_empty() {
+        return Some(Json::Number {
+            negative: false,
+            digits: String::new(),
+            exponent: 0,
+        });
+    }
+    let exponent = exponent
+        .parse::<i128>()
+        .ok()?
+        .checked_sub(frac.len() as i128)?
+        .checked_add((all.len() - significant.len()) as i128)?;
+    Some(Json::Number {
+        negative,
+        digits: digits.to_string(),
+        exponent,
+    })
 }
 
 fn describe_difference(case: &Case, jq: &Outcome, jqc: &Outcome) -> String {
@@ -196,4 +302,141 @@ fn cases_match_jq() {
         failures.len(),
         failures.join("\n\n")
     );
+}
+
+fn value_case() -> Case {
+    Case {
+        name: "value".into(),
+        args: vec![".a = null".into()],
+        stdin: String::new(),
+        files: Vec::new(),
+        compare_value: true,
+        known_difference: None,
+    }
+}
+
+fn success(stdout: &str) -> Outcome {
+    Outcome {
+        stdout: stdout.into(),
+        status: 0,
+    }
+}
+
+#[test]
+#[should_panic(expected = "\"args\" must be a non-empty array of strings")]
+fn case_with_empty_args_is_rejected() {
+    parse_case(&serde_json::json!({ "name": "no-args", "args": [] }));
+}
+
+#[test]
+fn value_comparison_checks_output_when_both_fail() {
+    let jq = Outcome {
+        stdout: "{\"a\":2}\n".into(),
+        status: 2,
+    };
+    let jqc = Outcome {
+        stdout: String::new(),
+        status: 2,
+    };
+    assert!(!same_result(&value_case(), &jq, &jqc));
+}
+
+#[test]
+fn value_comparison_accepts_multiple_values() {
+    assert!(same_result(
+        &value_case(),
+        &success("{\"a\":1}\n{\"a\":2}\n"),
+        &success("{\"a\": 1}\n{\"a\": 2}\n")
+    ));
+}
+
+#[test]
+fn value_comparison_keeps_integer_precision() {
+    assert!(!same_result(
+        &value_case(),
+        &success("{\"a\":100000000000000000001}\n"),
+        &success("{\"a\":1e+20}\n")
+    ));
+}
+
+#[test]
+fn value_comparison_ignores_number_spelling() {
+    assert!(same_result(
+        &value_case(),
+        &success("{\"a\":9,\"b\":1E+20,\"c\":[100,1.50,0.001,0]}\n"),
+        &success("{\"a\": 9, \"b\": 1e20, \"c\": [1e2, 1.5, 1e-3, -0]}\n")
+    ));
+}
+
+#[test]
+fn value_comparison_reads_numbers_beyond_f64_range() {
+    assert!(same_result(
+        &value_case(),
+        &success("{\"a\":1E+1000}\n"),
+        &success("{\"a\": 1e1000}\n")
+    ));
+}
+
+#[test]
+fn value_comparison_rejects_output_jq_cannot_read() {
+    let jq = success("{\"a\":1,\"c\":true}\n");
+    for jqc in [
+        "{\"a\":1 \"c\":true}\n",
+        "{a:1,\"c\":true}\n",
+        "{'a':1,\"c\":true}\n",
+        "{\"a\":1,\"c\":true,}\n",
+        "// comment\n{\"a\":1,\"c\":true}\n",
+        "{\"a\":0x1,\"c\":true}\n",
+        "{\"a\":+1,\"c\":true}\n",
+    ] {
+        assert!(!same_result(&value_case(), &jq, &success(jqc)), "{jqc:?}");
+    }
+}
+
+#[test]
+fn value_comparison_rejects_values_without_separator() {
+    assert!(!same_result(
+        &value_case(),
+        &success("0\n1\n"),
+        &success("01\n")
+    ));
+    assert!(!same_result(
+        &value_case(),
+        &success("1\ntrue\n"),
+        &success("1true\n")
+    ));
+}
+
+#[test]
+fn value_comparison_handles_extreme_exponents() {
+    let extreme = success("1.0e-9223372036854775808\n");
+    assert!(same_result(&value_case(), &extreme, &extreme));
+    assert!(same_result(
+        &value_case(),
+        &success("0E+999999999\n"),
+        &success("0e9223372036854775808\n")
+    ));
+}
+
+#[test]
+fn value_comparison_uses_last_duplicate_key() {
+    assert!(same_result(
+        &value_case(),
+        &success("{\"a\":9}\n"),
+        &success("{\"a\": 1, \"a\": 9}\n")
+    ));
+}
+
+#[test]
+fn value_comparison_rejects_missing_jqc_output() {
+    assert!(!same_result(
+        &value_case(),
+        &success("null\n"),
+        &success("")
+    ));
+}
+
+#[test]
+fn value_comparison_accepts_no_output_from_both() {
+    assert!(same_result(&value_case(), &success(""), &success("")));
 }

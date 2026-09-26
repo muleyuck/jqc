@@ -1,5 +1,4 @@
 {
-  "jq_version": "1.8.2",
   "cases": {
     "identity-object": {
       "stdout": "{\n  \"a\": 1,\n  \"b\": [\n    1,\n    2\n  ]\n}\n",

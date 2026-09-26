@@ -24,6 +24,10 @@ count=$(jq '.cases | length' "$cases")
 i=0
 while [ "$i" -lt "$count" ]; do
   jq -c --argjson i "$i" '.cases[$i]' "$cases" > "$work/case.json"
+  if ! jq -e '.args | type == "array" and length > 0 and all(type == "string")' "$work/case.json" >/dev/null; then
+    echo "error: case $i in cases.json: \"args\" must be a non-empty array of strings" >&2
+    exit 1
+  fi
   run="$work/run$i"
   mkdir "$run"
 
@@ -46,6 +50,5 @@ while [ "$i" -lt "$count" ]; do
   i=$((i + 1))
 done
 
-jq -n --arg version "$version" --slurpfile entries "$work/entries" \
-  '{jq_version: $version, cases: ($entries | add // {})}' > "$expected"
+jq -n --slurpfile entries "$work/entries" '{cases: ($entries | add // {})}' > "$expected"
 echo "wrote ${expected#"$root"/} ($count cases, jq $version)"
