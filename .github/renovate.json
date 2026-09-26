@@ -19,6 +19,13 @@
       "managerFilePatterns": ["/^dist-workspace\\.toml$/"],
       "matchStrings": ["# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\s*\\n\\s*cargo-dist-version\\s*=\\s*\"(?<currentValue>[\\w.-]+)\""],
       "versioningTemplate": "semver"
+    },
+    {
+      "customType": "regex",
+      "managerFilePatterns": ["/^\\.github/workflows/jq-compat\\.yml$/"],
+      "matchStrings": ["# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\s*\\n\\s*JQ_VERSION:\\s*(?<currentValue>[\\w.-]+)"],
+      "extractVersionTemplate": "^jq-(?<version>.*)$",
+      "versioningTemplate": "loose"
     }
   ],
   "packageRules": [
