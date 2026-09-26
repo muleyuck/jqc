@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/muleyuck/jqc/compare/v0.2.0...v0.2.1) (2026-09-26)
+
+
+### Bug Fixes
+
+* match jq when editing objects with duplicate keys ([#37](https://github.com/muleyuck/jqc/issues/37)) ([5bb877a](https://github.com/muleyuck/jqc/commit/5bb877a3be32377f7490e1e53186a15ed6316307)), closes [#17](https://github.com/muleyuck/jqc/issues/17)
+
 ## [0.2.0](https://github.com/muleyuck/jqc/compare/v0.1.0...v0.2.0) (2026-07-17)
 
 
