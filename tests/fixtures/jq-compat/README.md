@@ -6,12 +6,12 @@
 
 ```json
 {
-  "name": "identity-keeps-key-order",
-  "args": ["."],
-  "stdin": "{\"b\":1,\"a\":2}",
-  "expect": ["{","  \"b\": 1,","  \"a\": 2","}"],
-  "jqc": ["{","  \"a\": 2,","  \"b\": 1","}"],
-  "note": "Bug #39: pretty-printed output sorts object keys instead of keeping the input order"
+  "name": "raw-output-non-string",
+  "args": ["-r","."],
+  "stdin": "{\"a\":1}",
+  "expect": ["{","  \"a\": 1","}"],
+  "jqc": ["{\"a\":1}"],
+  "note": "Bug #40: -r prints non-string values on one line instead of pretty-printing them"
 }
 ```
 

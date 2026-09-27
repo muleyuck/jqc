@@ -10,9 +10,7 @@
       "name": "identity-keeps-key-order",
       "args": ["."],
       "stdin": "{\"b\":1,\"a\":2}",
-      "expect": ["{","  \"b\": 1,","  \"a\": 2","}"],
-      "jqc": ["{","  \"a\": 2,","  \"b\": 1","}"],
-      "note": "Bug #39: pretty-printed output sorts object keys instead of keeping the input order"
+      "expect": ["{","  \"b\": 1,","  \"a\": 2","}"]
     },
     {
       "name": "compact-output",
@@ -214,6 +212,14 @@
       "stdin": "{\"a\":1}",
       "expect": ["{\"a\":1,\"c\":true}"],
       "jqc": ["{","  \"a\":1,","  \"c\": true","}"],
+      "note": "Bug #68: -c is ignored in edit mode"
+    },
+    {
+      "name": "assign-object-keeps-key-order",
+      "args": ["-c",".x = {\"b\":1,\"a\":2}"],
+      "stdin": "{\"x\":0}",
+      "expect": ["{\"x\":{\"b\":1,\"a\":2}}"],
+      "jqc": ["{\"x\":{","    \"b\": 1,","    \"a\": 2","  }}"],
       "note": "Bug #68: -c is ignored in edit mode"
     },
     {
