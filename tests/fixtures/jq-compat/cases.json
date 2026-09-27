@@ -28,9 +28,13 @@
       "name": "raw-output-non-string",
       "args": ["-r","."],
       "stdin": "{\"a\":1}",
-      "expect": ["{","  \"a\": 1","}"],
-      "jqc": ["{\"a\":1}"],
-      "note": "Bug #40: -r prints non-string values on one line instead of pretty-printing them"
+      "expect": ["{","  \"a\": 1","}"]
+    },
+    {
+      "name": "raw-compact-non-string",
+      "args": ["-r","-c","."],
+      "stdin": "{\"a\":1}",
+      "expect": ["{\"a\":1}"]
     },
     {
       "name": "monochrome-output",
