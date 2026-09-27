@@ -31,14 +31,17 @@ A case with `jqc` or `jqc_status` needs a `note`, so every difference from jq is
 
 ## Add a case
 
-1. Add the case to `cases.json`, writing down what jq prints (run it with the pinned jq version).
-2. Push the change and check the `jq-compat` workflow. If jqc prints something else and it is a bug, open an issue and add `jqc` (and `jqc_status` if needed) with a `note` that starts with `Bug #<issue>:`.
+1. Add the case to `cases.json` with what you expect jq to print.
+2. Push the change and check the `jq-compat` workflow. A failure shows each tool's actual stdout and exit status, so you can copy jq's output into `expect` if you guessed wrong. If jqc prints something else and it is a bug, open an issue and add `jqc` (and `jqc_status` if needed) with a `note` that starts with `Bug #<issue>:`.
 
 To run the check locally, put the jqc you want to test (for example `target/debug`) and the pinned jq version first in `PATH`, then run `scripts/jq-compat.sh`. Its last line shows which jq and jqc it used.
 
-## Fix a known difference
+## When a noted difference disappears
 
-Once jqc prints what `expect` says, the workflow fails and asks you to remove the case's `jqc` expectation and `note`. Remove them in the same PR as the fix.
+If jqc starts printing what `expect` says in a case that has a `jqc` expectation, the workflow fails and shows the case's `note`:
+
+- For a bug (`Bug #<issue>: ...`), the bug is fixed. Remove the case's `jqc` expectation and `note` in the same PR as the fix.
+- For an intended difference, the behavior the note describes is gone. Check whether that change is deliberate before removing them.
 
 ## When jq is updated
 
