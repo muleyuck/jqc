@@ -1,0 +1,48 @@
+name: jq-compat
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
+permissions: {}
+jobs:
+  jq-compat:
+    name: Compare jqc with jq
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    env:
+      # renovate: datasource=github-releases depName=jqlang/jq
+      JQ_VERSION: 1.8.2
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: muleyuck/github-actions/actions/rust/setup@v1
+
+      - name: Build jqc
+        run: |
+          cargo build --locked
+          echo "$PWD/target/debug" >> "$GITHUB_PATH"
+
+      - name: Install jq
+        run: |
+          mkdir -p "$RUNNER_TEMP/jq"
+          cd "$RUNNER_TEMP/jq"
+          base="https://github.com/jqlang/jq/releases/download/jq-${JQ_VERSION}"
+          curl -fsSLO "$base/jq-linux-amd64"
+          curl -fsSLO "$base/sha256sum.txt"
+          grep ' jq-linux-amd64$' sha256sum.txt | sha256sum -c -
+          mv jq-linux-amd64 jq
+          chmod +x jq
+          echo "$RUNNER_TEMP/jq" >> "$GITHUB_PATH"
+
+      - name: Check jq version
+        run: test "$(jq --version)" = "jq-${JQ_VERSION}"
+
+      - name: Compare jqc with jq
+        run: bash scripts/jq-compat.sh
