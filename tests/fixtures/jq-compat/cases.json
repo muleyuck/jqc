@@ -214,7 +214,7 @@
       "stdin": "{\"a\":1}",
       "expect": ["{\"a\":1,\"c\":true}"],
       "jqc": ["{","  \"a\":1,","  \"c\": true","}"],
-      "note": "Edit mode keeps the source formatting and ignores -c; adding a key spreads the object over several lines."
+      "note": "Bug #68: -c is ignored in edit mode"
     },
     {
       "name": "assign-array-element",
