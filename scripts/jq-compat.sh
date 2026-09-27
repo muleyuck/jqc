@@ -20,49 +20,6 @@ if ! jq -e -s 'length == 1 and (.[0] | type == "object" and (.cases | type == "a
   exit 1
 fi
 
-problems=$(jq -r '
-  # Lines are joined with newlines, so a line holding one would alias another expectation.
-  def lines: type == "array" and all(type == "string" and (contains("\n") | not));
-  # jq keeps number literals as written, so 5.0 would be compared as the text "5.0".
-  def integer($pattern): type == "number" and (tostring | test($pattern));
-  def exit_status: integer("^[0-9]+$");
-  (.cases | to_entries[] | .key as $i | .value as $c | "case \($i) in cases.json: " as $at
-   | if ($c | type) != "object" then $at + "must be an object" else
-     (($c | keys - ["name", "args", "stdin", "files", "expect", "status", "jqc", "jqc_status", "known_difference", "note"])[]
-      | $at + "unknown field \(tojson)"),
-     (if ($c.name | type) != "string" then $at + "\"name\" must be a string" else empty end),
-     (if ($c.args | type) != "array" or ($c.args | length) == 0 or ($c.args | any(type != "string"))
-      then $at + "\"args\" must be a non-empty array of strings" else empty end),
-     (if ($c.stdin | type) != "string" and $c.stdin != null then $at + "\"stdin\" must be a string" else empty end),
-     (if $c.files != null and (($c.files | type) != "object" or ($c.files | any(type != "string"))
-        or ($c.files | keys | any(. == "" or . == "." or . == ".." or contains("/"))))
-      then $at + "\"files\" must map plain file names to strings" else empty end),
-     (if $c.expect | lines then empty else $at + "\"expect\" must be an array of lines, each without a newline" end),
-     (if $c.jqc == null or ($c.jqc | lines) then empty else $at + "\"jqc\" must be an array of lines, each without a newline" end),
-     ((["status", "jqc_status"][]) as $f
-      | if $c[$f] == null or ($c[$f] | exit_status) then empty else $at + "\"\($f)\" must be an exit status" end),
-     (if $c.known_difference != null and ($c.known_difference | integer("^[1-9][0-9]*$") | not)
-      then $at + "\"known_difference\" must be an issue number" else empty end),
-     (if $c.known_difference != null and $c.note != null
-      then $at + "use either \"known_difference\" or \"note\", not both" else empty end),
-     (if $c.note != null and (($c.note | type) != "string" or $c.note == "") then $at + "\"note\" must be a non-empty string" else empty end),
-     (($c | has("jqc") or has("jqc_status")) as $differs
-      | if $differs and $c.known_difference == null and $c.note == null
-        then $at + "a jqc expectation needs a \"known_difference\" or a \"note\" explaining it"
-        elif ($differs | not) and ($c.known_difference != null or $c.note != null)
-        then $at + "\"known_difference\" and \"note\" only apply when jqc has its own expectation"
-        elif $differs and ($c.jqc // $c.expect) == $c.expect and ($c.jqc_status // $c.status // 0) == ($c.status // 0)
-        then $at + "the jqc expectation is the same as \"expect\"; remove it"
-        else empty end)
-     end),
-  ([.cases[] | objects | .name] | group_by(.) | map(select(length > 1) | .[0])[]
-   | "duplicate case name \(tojson) in cases.json")
-' "$cases")
-if [ -n "$problems" ]; then
-  echo "$problems" >&2
-  exit 1
-fi
-
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 
@@ -99,12 +56,12 @@ describe() {
 
 count=$(jq '.cases | length' "$cases")
 same=0 known=0 intended=0 failures=0
-i=0
-while [ "$i" -lt "$count" ]; do
+for ((i = 0; i < count; i++)); do
   jq -c --argjson i "$i" '.cases[$i]' "$cases" > "$work/case.json"
   name=$(jq -r '.name' "$work/case.json")
   issue=$(jq -r '.known_difference // empty' "$work/case.json")
   differs=$(jq -r 'has("jqc") or has("jqc_status")' "$work/case.json")
+  explained=$(jq -r 'has("known_difference") or has("note")' "$work/case.json")
   args=()
   while IFS= read -r -d '' arg; do
     args+=("$arg")
@@ -115,6 +72,18 @@ while [ "$i" -lt "$count" ]; do
   run jqc
   expectation jq-expected '.expect' '.status // 0'
   expectation jqc-expected '.jqc // .expect' '.jqc_status // .status // 0'
+
+  if [ "$differs" = true ] && [ "$explained" = false ]; then
+    echo "FAIL $name: a jqc expectation needs a known_difference or a note explaining it"
+    failures=$((failures + 1))
+    continue
+  fi
+  # A jqc expectation equal to "expect" would hide a fix, since jqc would always match it.
+  if [ "$differs" = true ] && matches jq-expected jqc-expected; then
+    echo "FAIL $name: the jqc expectation is the same as \"expect\"; remove it"
+    failures=$((failures + 1))
+    continue
+  fi
 
   if ! matches jq jq-expected; then
     echo "FAIL $name: jq's output doesn't match \"expect\""
@@ -141,7 +110,6 @@ while [ "$i" -lt "$count" ]; do
     describe jqc jqc-expected
     failures=$((failures + 1))
   fi
-  i=$((i + 1))
 done
 
 echo "$count cases, $failures failures: $same same as jq, $known known differences, $intended intended differences ($(jq --version), jqc at $(command -v jqc))"
