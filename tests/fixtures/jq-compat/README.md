@@ -11,7 +11,7 @@
   "stdin": "{\"b\":1,\"a\":2}",
   "expect": ["{","  \"b\": 1,","  \"a\": 2","}"],
   "jqc": ["{","  \"a\": 2,","  \"b\": 1","}"],
-  "known_difference": 39
+  "note": "Bug #39: pretty-printed output sorts object keys instead of keeping the input order"
 }
 ```
 
@@ -25,21 +25,20 @@
 | `status` | no | jq's exit status. `0` when omitted |
 | `jqc` | no | What jqc prints, when it differs from `expect`. When omitted, jqc must print `expect` |
 | `jqc_status` | no | jqc's exit status, when it differs from `status` |
-| `known_difference` | no | Issue number, when jqc's difference from jq is a bug |
-| `note` | no | Why jqc differs, when the difference is intended (for example, edit mode keeping the source formatting) |
+| `note` | no | Why jqc differs. For a bug, start with `Bug #<issue>:`; for an intended difference, say why (for example, edit mode keeping the source formatting) |
 
-A case with `jqc` or `jqc_status` needs a `known_difference` or a `note`, so every difference from jq is explained. stderr is never compared. Edit expressions usually pass `-c`, so both tools print one line.
+A case with `jqc` or `jqc_status` needs a `note`, so every difference from jq is explained. stderr is never compared. Edit expressions usually pass `-c`, so both tools print one line.
 
 ## Add a case
 
 1. Add the case to `cases.json`, writing down what jq prints (run it with the pinned jq version).
-2. Push the change and check the `jq-compat` workflow. If jqc prints something else and it is a bug, open an issue and add `jqc` (and `jqc_status` if needed) with the issue number as `known_difference`.
+2. Push the change and check the `jq-compat` workflow. If jqc prints something else and it is a bug, open an issue and add `jqc` (and `jqc_status` if needed) with a `note` that starts with `Bug #<issue>:`.
 
 To run the check locally, put the jqc you want to test (for example `target/debug`) and the pinned jq version first in `PATH`, then run `scripts/jq-compat.sh`. Its last line shows which jq and jqc it used.
 
 ## Fix a known difference
 
-Once jqc prints what `expect` says, the workflow fails and asks you to remove the case's `jqc` expectation and `known_difference`. Remove them in the same PR as the fix.
+Once jqc prints what `expect` says, the workflow fails and asks you to remove the case's `jqc` expectation and `note`. Remove them in the same PR as the fix.
 
 ## When jq is updated
 

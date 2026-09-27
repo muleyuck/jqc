@@ -55,13 +55,12 @@ describe() {
 }
 
 count=$(jq '.cases | length' "$cases")
-same=0 known=0 intended=0 failures=0
+same=0 differences=0 failures=0
 for ((i = 0; i < count; i++)); do
   jq -c --argjson i "$i" '.cases[$i]' "$cases" > "$work/case.json"
   name=$(jq -r '.name' "$work/case.json")
-  issue=$(jq -r '.known_difference // empty' "$work/case.json")
+  note=$(jq -r '.note // empty' "$work/case.json")
   differs=$(jq -r 'has("jqc") or has("jqc_status")' "$work/case.json")
-  explained=$(jq -r 'has("known_difference") or has("note")' "$work/case.json")
   args=()
   while IFS= read -r -d '' arg; do
     args+=("$arg")
@@ -73,8 +72,8 @@ for ((i = 0; i < count; i++)); do
   expectation jq-expected '.expect' '.status // 0'
   expectation jqc-expected '.jqc // .expect' '.jqc_status // .status // 0'
 
-  if [ "$differs" = true ] && [ "$explained" = false ]; then
-    echo "FAIL $name: a jqc expectation needs a known_difference or a note explaining it"
+  if [ "$differs" = true ] && [ -z "$note" ]; then
+    echo "FAIL $name: a jqc expectation needs a note explaining it"
     failures=$((failures + 1))
     continue
   fi
@@ -93,17 +92,16 @@ for ((i = 0; i < count; i++)); do
   if matches jqc jqc-expected; then
     if [ "$differs" = false ]; then
       same=$((same + 1))
-    elif [ -n "$issue" ]; then
-      known=$((known + 1))
     else
-      intended=$((intended + 1))
+      differences=$((differences + 1))
     fi
   elif [ "$differs" = true ] && matches jqc jq-expected; then
-    if [ -n "$issue" ]; then
-      echo "FAIL $name: jqc now prints what \"expect\" says, so #$issue looks fixed: remove its jqc expectation and known_difference"
+    if [[ $note == "Bug #"* ]]; then
+      echo "FAIL $name: jqc now prints what \"expect\" says, so this looks fixed: remove its jqc expectation and note"
     else
-      echo "FAIL $name: jqc now prints what \"expect\" says: remove its jqc expectation and note"
+      echo "FAIL $name: jqc now prints what \"expect\" says, so the intended difference is gone: if that change is deliberate, remove its jqc expectation and note"
     fi
+    echo "  note: $note"
     failures=$((failures + 1))
   else
     echo "FAIL $name: jqc's output doesn't match its expectation"
@@ -112,5 +110,5 @@ for ((i = 0; i < count; i++)); do
   fi
 done
 
-echo "$count cases, $failures failures: $same same as jq, $known known differences, $intended intended differences ($(jq --version), jqc at $(command -v jqc))"
+echo "$count cases, $failures failures: $same same as jq, $differences with a noted difference ($(jq --version), jqc at $(command -v jqc))"
 [ "$failures" -eq 0 ]

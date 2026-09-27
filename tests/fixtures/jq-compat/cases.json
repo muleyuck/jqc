@@ -12,7 +12,7 @@
       "stdin": "{\"b\":1,\"a\":2}",
       "expect": ["{","  \"b\": 1,","  \"a\": 2","}"],
       "jqc": ["{","  \"a\": 2,","  \"b\": 1","}"],
-      "known_difference": 39
+      "note": "Bug #39: pretty-printed output sorts object keys instead of keeping the input order"
     },
     {
       "name": "compact-output",
@@ -32,7 +32,7 @@
       "stdin": "{\"a\":1}",
       "expect": ["{","  \"a\": 1","}"],
       "jqc": ["{\"a\":1}"],
-      "known_difference": 40
+      "note": "Bug #40: -r prints non-string values on one line instead of pretty-printing them"
     },
     {
       "name": "monochrome-output",
@@ -98,7 +98,7 @@
       "stdin": "{\"a\":0.5}",
       "expect": ["1"],
       "jqc": ["1.0"],
-      "known_difference": 67
+      "note": "Bug #67: computed numbers are formatted differently from jq"
     },
     {
       "name": "exponent-sign",
@@ -106,22 +106,22 @@
       "stdin": "1",
       "expect": ["1e+20"],
       "jqc": ["1e20"],
-      "known_difference": 67
+      "note": "Bug #67: computed numbers are formatted differently from jq"
     },
     {
       "name": "nan",
       "args": ["-n","-c","nan"],
       "expect": ["null"],
       "jqc": ["NaN"],
-      "known_difference": 41
+      "note": "Bug #41: nan is printed as NaN instead of null"
     },
     {
       "name": "big-integer",
       "args": ["."],
-      "stdin": "100000000000000000000",
-      "expect": ["100000000000000000000"],
+      "stdin": "100000000000000000001",
+      "expect": ["100000000000000000001"],
       "jqc": ["1e+20"],
-      "known_difference": 42
+      "note": "Bug #42: integers beyond f64 precision lose digits"
     },
     {
       "name": "big-integer-equality",
@@ -129,7 +129,7 @@
       "stdin": "100000000000000000001",
       "expect": ["false"],
       "jqc": ["true"],
-      "known_difference": 42
+      "note": "Bug #42: integers beyond f64 precision lose digits"
     },
     {
       "name": "huge-number",
@@ -138,7 +138,7 @@
       "expect": ["1E+1000"],
       "jqc": [],
       "jqc_status": 1,
-      "known_difference": 43
+      "note": "Bug #43: numbers beyond the f64 range fail to parse"
     },
     {
       "name": "runtime-error-status",
@@ -147,7 +147,7 @@
       "expect": [],
       "status": 5,
       "jqc_status": 1,
-      "known_difference": 44
+      "note": "Bug #44: exits with status 1 instead of 5 on runtime errors and invalid input"
     },
     {
       "name": "invalid-input-status",
@@ -156,7 +156,7 @@
       "expect": [],
       "status": 5,
       "jqc_status": 1,
-      "known_difference": 44
+      "note": "Bug #44: exits with status 1 instead of 5 on runtime errors and invalid input"
     },
     {
       "name": "multiple-stdin-values",
@@ -165,7 +165,7 @@
       "expect": ["1","2"],
       "jqc": [],
       "jqc_status": 1,
-      "known_difference": 50
+      "note": "Bug #50: multiple JSON values on stdin fail to parse"
     },
     {
       "name": "multiple-files",
@@ -174,7 +174,7 @@
       "expect": ["1","2"],
       "jqc": [],
       "jqc_status": 2,
-      "known_difference": 51
+      "note": "Bug #51: only one input file is accepted"
     },
     {
       "name": "assign",
@@ -266,7 +266,7 @@
       "stdin": "{\"a\":100000000000000000001}",
       "expect": ["{\"a\":100000000000000000001}"],
       "jqc": ["{\"a\":1e+20}"],
-      "known_difference": 42
+      "note": "Bug #42: integers beyond f64 precision lose digits"
     },
     {
       "name": "assign-missing-parent",
@@ -275,7 +275,7 @@
       "expect": ["{\"a\":{\"b\":1}}"],
       "jqc": [],
       "jqc_status": 1,
-      "known_difference": 45
+      "note": "Bug #45: assigning under a missing or null parent errors instead of creating it"
     },
     {
       "name": "assign-past-end",
@@ -284,7 +284,7 @@
       "expect": ["{\"a\":[5,1]}"],
       "jqc": [],
       "jqc_status": 1,
-      "known_difference": 46
+      "note": "Bug #46: assigning past the end of an array errors instead of extending it"
     },
     {
       "name": "assign-negative-index",
@@ -293,7 +293,7 @@
       "expect": ["{\"a\":[1,2,0]}"],
       "jqc": [],
       "jqc_status": 1,
-      "known_difference": 47
+      "note": "Bug #47: assignments to negative array indexes error"
     },
     {
       "name": "assign-slice",
@@ -302,7 +302,7 @@
       "expect": ["{\"a\":[1]}"],
       "jqc": [],
       "jqc_status": 1,
-      "known_difference": 48
+      "note": "Bug #48: assignments to array slices error"
     },
     {
       "name": "del-multiple-paths",
@@ -311,7 +311,7 @@
       "expect": ["{\"c\":3}"],
       "jqc": [],
       "jqc_status": 1,
-      "known_difference": 49
+      "note": "Bug #49: del() with multiple paths errors"
     },
     {
       "name": "assign-multiple-results",
@@ -320,7 +320,7 @@
       "expect": ["{\"a\":1}","{\"a\":2}"],
       "jqc": [],
       "jqc_status": 1,
-      "known_difference": 66
+      "note": "Bug #66: edit expressions with multiple results error instead of printing each result"
     }
   ]
 }
