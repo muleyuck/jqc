@@ -112,6 +112,20 @@
       "expect": ["[","  1e+20,","  1,","  1e-05","]"]
     },
     {
+      "name": "number-literals",
+      "args": ["-c","."],
+      "stdin": "[1.000,1e2,-0.0,0.00001,-1e1000,1.5e300]",
+      "expect": ["[1.000,1E+2,-0.0,0.00001,-1E+1000,1.5E+300]"]
+    },
+    {
+      "name": "big-integer-arithmetic",
+      "args": ["-c",". + 0"],
+      "stdin": "100000000000000000001",
+      "expect": ["1e+20"],
+      "jqc": ["100000000000000000001"],
+      "note": "jaq computes with integers of any size, where jq converts them to doubles first."
+    },
+    {
       "name": "nan",
       "args": ["-n","-c","nan"],
       "expect": ["null"]
@@ -136,26 +150,19 @@
       "name": "big-integer",
       "args": ["."],
       "stdin": "100000000000000000001",
-      "expect": ["100000000000000000001"],
-      "jqc": ["1e+20"],
-      "note": "Bug #42: integers beyond f64 precision lose digits"
+      "expect": ["100000000000000000001"]
     },
     {
       "name": "big-integer-equality",
       "args": [". == 100000000000000000000"],
       "stdin": "100000000000000000001",
-      "expect": ["false"],
-      "jqc": ["true"],
-      "note": "Bug #42: integers beyond f64 precision lose digits"
+      "expect": ["false"]
     },
     {
       "name": "huge-number",
       "args": ["."],
       "stdin": "1e1000",
-      "expect": ["1E+1000"],
-      "jqc": [],
-      "jqc_status": 1,
-      "note": "Bug #43: numbers beyond the f64 range fail to parse"
+      "expect": ["1E+1000"]
     },
     {
       "name": "runtime-error-status",
@@ -295,9 +302,7 @@
       "name": "big-integer-rewrite",
       "args": ["-c",".a |= ."],
       "stdin": "{\"a\":100000000000000000001}",
-      "expect": ["{\"a\":100000000000000000001}"],
-      "jqc": ["{\"a\":1e+20}"],
-      "note": "Bug #42: integers beyond f64 precision lose digits"
+      "expect": ["{\"a\":100000000000000000001}"]
     },
     {
       "name": "assign-missing-parent",

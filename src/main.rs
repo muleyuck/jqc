@@ -162,12 +162,12 @@ fn resolve_color(force_color: bool, monochrome: bool) -> bool {
 }
 
 fn print_value(val: &jaq_json::Val, raw: bool, compact: bool, use_color: bool) {
-    let output = val.to_string();
     // -r only affects strings; other values print as they would without it
-    if raw && output.starts_with('"') && output.ends_with('"') {
+    if raw && let jaq_json::Val::TStr(_) = val {
+        let output = val.to_string();
         println!("{}", &output[1..output.len() - 1]);
     } else if compact {
-        println!("{output}");
+        println!("{val}");
     } else {
         let pretty = jaq::to_pretty_json(val);
         if use_color {

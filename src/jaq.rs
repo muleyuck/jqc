@@ -1,9 +1,12 @@
+use std::borrow::Cow;
+
 use anyhow::{Result, anyhow};
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, compile, data, load, val::unwrap_valr};
+use jaq_json::read::parse_single_num;
 use jaq_json::write::{Pp, write};
-use jaq_json::{Num, Rc, Val};
-use jsonc_parser::ParseOptions;
+use jaq_json::{Map, Num, Rc, Val};
+use jsonc_parser::{JsonValue, ParseOptions};
 
 type CompileErrors<'a> = Vec<(File<&'a str, ()>, Vec<compile::Error<&'a str>>)>;
 
@@ -13,10 +16,112 @@ pub fn run(filter_str: &str, text: &str) -> Result<Vec<Val>> {
     run_with_input(filter_str, parse(text)?)
 }
 
-/// Parse `text` as JSONC into a jaq value.
+/// Parse `text` as JSONC into a jaq value. Numbers are read the way jaq
+/// reads them, so integers keep every digit and decimals keep their text.
 pub fn parse(text: &str) -> Result<Val> {
-    jsonc_parser::parse_to_serde_value::<Val>(text, &ParseOptions::default())
-        .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))
+    let value = jsonc_parser::parse_to_value(text, &ParseOptions::default())
+        .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))?;
+    value.map_or(Ok(Val::Null), from_jsonc)
+}
+
+fn from_jsonc(v: JsonValue) -> Result<Val> {
+    Ok(match v {
+        JsonValue::Null => Val::Null,
+        JsonValue::Boolean(b) => Val::Bool(b),
+        JsonValue::Number(n) => Val::Num(parse_number(n)?),
+        JsonValue::String(s) => Val::from(s.into_owned()),
+        JsonValue::Array(a) => a.into_iter().map(from_jsonc).collect::<Result<_>>()?,
+        JsonValue::Object(o) => Val::Obj(Rc::new(
+            o.into_iter()
+                .map(|(k, v)| Ok((Val::from(k.into_owned()), from_jsonc(v)?)))
+                .collect::<Result<Map>>()?,
+        )),
+    })
+}
+
+/// Read a JSONC number literal. JSONC also allows a leading `+` and
+/// hexadecimal integers, which jaq's reader doesn't.
+fn parse_number(raw: &str) -> Result<Num> {
+    let invalid = || anyhow!("Failed to parse JSONC: invalid number {raw:?}");
+    let unsigned = raw.trim_start_matches(['+', '-']);
+    let negative = raw.starts_with('-');
+    if let Some(hex) = unsigned
+        .strip_prefix("0x")
+        .or_else(|| unsigned.strip_prefix("0X"))
+    {
+        let n = Num::from_str_radix(hex, 16).ok_or_else(invalid)?;
+        return Ok(if negative { -n } else { n });
+    }
+    let literal = raw.trim_start_matches('+');
+    match parse_single_num(literal.as_bytes()).ok_or_else(invalid)? {
+        // jaq reads `-0` as the integer 0; jq keeps the sign.
+        Num::Int(0) if negative => Ok(Num::Dec(Rc::new(literal.to_string()))),
+        Num::Dec(d) => Ok(match canonical_decimal(&d) {
+            Cow::Borrowed(_) => Num::Dec(d),
+            Cow::Owned(c) => Num::Dec(Rc::new(c)),
+        }),
+        n => Ok(n),
+    }
+}
+
+/// Write a decimal literal the way jq prints one it read: in decNumber's
+/// scientific notation, which keeps the digits as written (`1.000`) but
+/// moves exponents into `E+n` form (`1e2` becomes `1E+2`).
+fn canonical_decimal(lit: &str) -> Cow<'_, str> {
+    if is_canonical_plain(lit) {
+        return Cow::Borrowed(lit);
+    }
+    let (sign, unsigned) = match lit.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", lit.trim_start_matches('+')),
+    };
+    let (mantissa, exp) = match unsigned.split_once(['e', 'E']) {
+        Some((m, e)) => (m, e.trim_start_matches('+').parse::<i64>().unwrap_or(0)),
+        None => (unsigned, 0),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let digits = format!("{int}{frac}");
+    let digits = match digits.trim_start_matches('0') {
+        "" => "0",
+        d => d,
+    };
+    let exp = exp - frac.len() as i64;
+    let len = digits.len() as i64;
+    let adjusted = exp + len - 1;
+    let body = if exp <= 0 && adjusted >= -6 {
+        if exp == 0 {
+            digits.to_string()
+        } else if len > -exp {
+            let (i, f) = digits.split_at((len + exp) as usize);
+            format!("{i}.{f}")
+        } else {
+            format!("0.{}{digits}", "0".repeat((-exp - len) as usize))
+        }
+    } else {
+        let (first, rest) = digits.split_at(1);
+        let rest = if rest.is_empty() {
+            String::new()
+        } else {
+            format!(".{rest}")
+        };
+        let exp_sign = if adjusted < 0 { '-' } else { '+' };
+        format!("{first}{rest}E{exp_sign}{}", adjusted.abs())
+    };
+    Cow::Owned(format!("{sign}{body}"))
+}
+
+/// A plain decimal such as `1.5` is already canonical unless it has more
+/// than 6 places after the point (`0.0000001` becomes `1E-7`). Checking
+/// this first avoids rewriting every decimal in a large input.
+fn is_canonical_plain(lit: &str) -> bool {
+    if lit.contains(['e', 'E', '+']) {
+        return false;
+    }
+    let unsigned = lit.trim_start_matches('-');
+    match unsigned.split_once('.') {
+        Some((int, frac)) => int != "0" || frac.len() <= 6,
+        None => true,
+    }
 }
 
 /// Apply `filter_str` as a jq filter against `null` as the input value,
@@ -64,10 +169,11 @@ fn run_with_input(filter_str: &str, input_val: Val) -> Result<Vec<Val>> {
 /// floats and prints them as `1.0`, `1e20`, `NaN` or `Infinity`; jq prints
 /// `1`, `1e+20`, `null` and the largest finite double instead.
 fn to_json_numbers(v: Val) -> Val {
-    if !has_float(&v) {
+    if !needs_json_numbers(&v) {
         return v;
     }
     match v {
+        Val::Num(Num::Dec(d)) => Val::Num(Num::Dec(Rc::new(canonical_decimal(&d).into_owned()))),
         Val::Num(Num::Float(f)) if f.is_nan() => Val::Null,
         Val::Num(Num::Float(f)) => {
             let f = if f.is_infinite() {
@@ -87,11 +193,14 @@ fn to_json_numbers(v: Val) -> Val {
     }
 }
 
-fn has_float(v: &Val) -> bool {
+/// Decimals read from the input are already canonical; only those written
+/// in the filter (`1e2`) and floats need rewriting.
+fn needs_json_numbers(v: &Val) -> bool {
     match v {
         Val::Num(Num::Float(_)) => true,
-        Val::Arr(a) => a.iter().any(has_float),
-        Val::Obj(o) => o.values().any(has_float),
+        Val::Num(Num::Dec(d)) => matches!(canonical_decimal(d), Cow::Owned(ref c) if c != &**d),
+        Val::Arr(a) => a.iter().any(needs_json_numbers),
+        Val::Obj(o) => o.values().any(needs_json_numbers),
         _ => false,
     }
 }
@@ -248,6 +357,48 @@ mod tests {
             result[0].to_string(),
             r#"[null,1.7976931348623157e+308,-1.7976931348623157e+308,{"a":null}]"#
         );
+    }
+
+    #[test]
+    fn test_canonical_decimal_matches_jq() {
+        // Expected strings are jq 1.8.2's output for the same input literal.
+        let cases = [
+            ("1.000", "1.000"),
+            ("1.10", "1.10"),
+            ("0.0", "0.0"),
+            ("-0.0", "-0.0"),
+            ("100e-2", "1.00"),
+            ("0e10", "0E+10"),
+            ("-0e5", "-0E+5"),
+            ("1e0", "1"),
+            ("1E+0", "1"),
+            ("1e2", "1E+2"),
+            ("10e1", "1.0E+2"),
+            ("1.0e2", "1.0E+2"),
+            ("1.5E3", "1.5E+3"),
+            ("0.001e3", "1"),
+            ("0.000001", "0.000001"),
+            ("0.0000001", "1E-7"),
+            ("1.2e-6", "0.0000012"),
+            ("12e-8", "1.2E-7"),
+            ("-1.5e-3", "-0.0015"),
+            ("1.23e-10", "1.23E-10"),
+            ("1e1000", "1E+1000"),
+            ("1e-1000", "1E-1000"),
+            (
+                "123456789012345678901234567890.123456789",
+                "123456789012345678901234567890.123456789",
+            ),
+        ];
+        for (lit, want) in cases {
+            assert_eq!(canonical_decimal(lit), want, "canonical_decimal({lit:?})");
+        }
+    }
+
+    #[test]
+    fn test_parse_keeps_number_literals() {
+        let v = parse("[100000000000000000001, 1e1000, -0, +1, 0x1F, -0x10]").unwrap();
+        assert_eq!(v.to_string(), "[100000000000000000001,1E+1000,-0,1,31,-16]");
     }
 
     #[test]
