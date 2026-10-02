@@ -162,13 +162,9 @@ fn resolve_color(force_color: bool, monochrome: bool) -> bool {
 }
 
 fn print_value(output: &str, raw: bool, compact: bool, use_color: bool) -> Result<()> {
-    if raw {
-        // Strip surrounding quotes from string values
-        if output.starts_with('"') && output.ends_with('"') {
-            println!("{}", &output[1..output.len() - 1]);
-        } else {
-            println!("{output}");
-        }
+    // -r only affects strings; other values print as they would without it
+    if raw && output.starts_with('"') && output.ends_with('"') {
+        println!("{}", &output[1..output.len() - 1]);
     } else if compact {
         println!("{output}");
     } else {
