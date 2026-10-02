@@ -117,17 +117,19 @@ fn canonical_decimal(lit: &str) -> Cow<'_, str> {
 }
 
 /// A plain decimal such as `1.5` is already canonical unless it has more
-/// than 6 places after the point (`0.0000001` becomes `1E-7`). Checking
-/// this first avoids rewriting every decimal in a large input.
+/// than 6 places after the point (`0.0000001` becomes `1E-7`) or leading
+/// zeros, which jaq's `tonumber` accepts (`01.5`). Checking this first
+/// avoids rewriting every decimal in a large input.
 fn is_canonical_plain(lit: &str) -> bool {
     if lit.contains(['e', 'E', '+']) {
         return false;
     }
     let unsigned = lit.trim_start_matches('-');
-    match unsigned.split_once('.') {
-        Some((int, frac)) => int != "0" || frac.len() <= 6,
-        None => true,
+    let (int, frac) = unsigned.split_once('.').unwrap_or((unsigned, ""));
+    if int.len() > 1 && int.starts_with('0') {
+        return false;
     }
+    int != "0" || frac.len() <= 6
 }
 
 /// Apply `filter_str` as a jq filter against `null` as the input value,
@@ -392,6 +394,9 @@ mod tests {
         let cases = [
             ("1.000", "1.000"),
             ("1.10", "1.10"),
+            // jaq's tonumber accepts leading zeros, which JSON doesn't.
+            ("01.5", "1.5"),
+            ("00.5", "0.5"),
             ("0.0", "0.0"),
             ("-0.0", "-0.0"),
             ("100e-2", "1.00"),

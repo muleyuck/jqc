@@ -153,6 +153,11 @@
       "expect": ["1000000000000000.2"]
     },
     {
+      "name": "tonumber-leading-zero",
+      "args": ["-n","-c","\"01.5\" | tonumber"],
+      "expect": ["1.5"]
+    },
+    {
       "name": "nan",
       "args": ["-n","-c","nan"],
       "expect": ["null"]
@@ -296,6 +301,12 @@
       "expect": ["{\"a\":\"�\"}"],
       "jqc": ["{","  \"a\": \"�\"","}"],
       "note": "Bug #68: -c is ignored in edit mode"
+    },
+    {
+      "name": "assign-tonumber-leading-zero",
+      "args": ["-c",".a = (\"01.5\" | tonumber)"],
+      "stdin": "{\"a\":0}",
+      "expect": ["{\"a\":1.5}"]
     },
     {
       "name": "assign-array-element",
