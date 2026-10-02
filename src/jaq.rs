@@ -1,7 +1,7 @@
 use anyhow::{Result, anyhow};
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, compile, data, load, val::unwrap_valr};
-use jaq_json::Val;
+use jaq_json::{Num, Rc, Val};
 use jsonc_parser::ParseOptions;
 
 type CompileErrors<'a> = Vec<(File<&'a str, ()>, Vec<compile::Error<&'a str>>)>;
@@ -47,8 +47,40 @@ fn run_with_input(filter_str: &str, input_val: Val) -> Result<Vec<Val>> {
     filter
         .id
         .run((ctx, input_val))
-        .map(|r| unwrap_valr(r).map_err(|e| anyhow!("runtime error: {e}")))
+        .map(|r| {
+            unwrap_valr(r)
+                .map(to_json_numbers)
+                .map_err(|e| anyhow!("runtime error: {e}"))
+        })
         .collect()
+}
+
+/// Replace numbers JSON can't represent the way jq prints them:
+/// NaN becomes `null` and ±infinity the largest finite double.
+fn to_json_numbers(v: Val) -> Val {
+    if !has_non_finite(&v) {
+        return v;
+    }
+    match v {
+        Val::Num(Num::Float(f)) if f.is_nan() => Val::Null,
+        Val::Num(Num::Float(f)) if f.is_infinite() => Val::from(f64::MAX.copysign(f)),
+        Val::Arr(a) => a.iter().cloned().map(to_json_numbers).collect(),
+        Val::Obj(o) => Val::Obj(Rc::new(
+            o.iter()
+                .map(|(k, v)| (k.clone(), to_json_numbers(v.clone())))
+                .collect(),
+        )),
+        v => v,
+    }
+}
+
+fn has_non_finite(v: &Val) -> bool {
+    match v {
+        Val::Num(Num::Float(f)) => !f.is_finite(),
+        Val::Arr(a) => a.iter().any(has_non_finite),
+        Val::Obj(o) => o.values().any(has_non_finite),
+        _ => false,
+    }
 }
 
 /// Format jaq-core load errors (lex / parse / io) into a user-readable string.
@@ -144,6 +176,20 @@ mod tests {
         let result = run_null("[range(3)]").unwrap();
         assert_eq!(result.len(), 1);
         assert_eq!(result[0].to_string(), "[0,1,2]");
+    }
+
+    #[test]
+    fn test_run_null_non_finite_numbers_become_json() {
+        let result = run_null("[nan, infinite, -infinite, {a: nan}]").unwrap();
+        assert_eq!(result.len(), 1);
+        assert_eq!(
+            result[0].to_string(),
+            format!(
+                "[null,{},{},{{\"a\":null}}]",
+                Val::from(f64::MAX),
+                Val::from(-f64::MAX)
+            )
+        );
     }
 
     #[test]
