@@ -208,7 +208,12 @@ fn write_cst_value(existing: &CstNode, new_val: &Val) -> Result<()> {
     if let (Some(arr), Val::Arr(new_elems)) = (existing.as_array(), new_val)
         && let Val::Arr(existing_elems) = jaq::parse(&arr.to_string())?
         && new_elems.len() > existing_elems.len()
-        && new_elems[..existing_elems.len()] == existing_elems[..]
+        // Compare the printed text: `Val` equality treats 9007199254740993
+        // and 9007199254740992.0 as equal through f64.
+        && new_elems
+            .iter()
+            .zip(existing_elems.iter())
+            .all(|(new, old)| new.to_string() == old.to_string())
     {
         for elem in &new_elems[existing_elems.len()..] {
             arr.append(to_cst_input(elem)?);

@@ -126,6 +126,28 @@
       "note": "jaq computes with integers of any size, where jq converts them to doubles first."
     },
     {
+      "name": "negative-zero",
+      "args": ["-c","."],
+      "stdin": "-0",
+      "expect": ["-0"],
+      "jqc": ["0"],
+      "note": "jaq reads -0 as the integer 0. Keeping it an integer lets it index arrays, as it does in jq."
+    },
+    {
+      "name": "negative-zero-index",
+      "args": ["-c",". as $i | [\"first\"][$i]"],
+      "stdin": "-0",
+      "expect": ["\"first\""]
+    },
+    {
+      "name": "non-string-object-key",
+      "args": ["-n","{(1): \"x\"}"],
+      "expect": [],
+      "status": 3,
+      "jqc_status": 1,
+      "note": "jq rejects the key when it compiles the filter. jaq builds the object, so jqc rejects it when it prints the result."
+    },
+    {
       "name": "nan",
       "args": ["-n","-c","nan"],
       "expect": ["null"]
@@ -253,6 +275,14 @@
       "args": ["-c",".a = .a + 0.5 | .b *= 1e20"],
       "stdin": "{\"a\":0.5,\"b\":2}",
       "expect": ["{\"a\":1,\"b\":2e+20}"]
+    },
+    {
+      "name": "assign-array-keeps-exact-numbers",
+      "args": ["-c",".a = [9007199254740992.0, 2]"],
+      "stdin": "{\"a\":[9007199254740993]}",
+      "expect": ["{\"a\":[9007199254740992.0,2]}"],
+      "jqc": ["{\"a\":[9007199254740992.0, 2]}"],
+      "note": "Bug #68: -c is ignored in edit mode"
     },
     {
       "name": "assign-array-element",

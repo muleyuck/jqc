@@ -1,6 +1,6 @@
 use std::borrow::Cow;
 
-use anyhow::{Result, anyhow};
+use anyhow::{Result, anyhow, bail};
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, compile, data, load, val::unwrap_valr};
 use jaq_json::read::parse_single_num;
@@ -54,8 +54,6 @@ fn parse_number(raw: &str) -> Result<Num> {
     }
     let literal = raw.trim_start_matches('+');
     match parse_single_num(literal.as_bytes()).ok_or_else(invalid)? {
-        // jaq reads `-0` as the integer 0; jq keeps the sign.
-        Num::Int(0) if negative => Ok(Num::Dec(Rc::new(literal.to_string()))),
         Num::Dec(d) => Ok(match canonical_decimal(&d) {
             Cow::Borrowed(_) => Num::Dec(d),
             Cow::Owned(c) => Num::Dec(Rc::new(c)),
@@ -76,7 +74,11 @@ fn canonical_decimal(lit: &str) -> Cow<'_, str> {
         None => ("", lit.trim_start_matches('+')),
     };
     let (mantissa, exp) = match unsigned.split_once(['e', 'E']) {
-        Some((m, e)) => (m, e.trim_start_matches('+').parse::<i64>().unwrap_or(0)),
+        Some((m, e)) => match e.trim_start_matches('+').parse::<i64>() {
+            Ok(e) => (m, e),
+            // Leave an exponent beyond i64 as written rather than misread it.
+            Err(_) => return Cow::Borrowed(lit),
+        },
         None => (unsigned, 0),
     };
     let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
@@ -85,9 +87,13 @@ fn canonical_decimal(lit: &str) -> Cow<'_, str> {
         "" => "0",
         d => d,
     };
-    let exp = exp - frac.len() as i64;
     let len = digits.len() as i64;
-    let adjusted = exp + len - 1;
+    let Some((exp, adjusted)) = exp
+        .checked_sub(frac.len() as i64)
+        .and_then(|exp| Some((exp, exp.checked_add(len - 1)?)))
+    else {
+        return Cow::Borrowed(lit);
+    };
     let body = if exp <= 0 && adjusted >= -6 {
         if exp == 0 {
             digits.to_string()
@@ -105,7 +111,7 @@ fn canonical_decimal(lit: &str) -> Cow<'_, str> {
             format!(".{rest}")
         };
         let exp_sign = if adjusted < 0 { '-' } else { '+' };
-        format!("{first}{rest}E{exp_sign}{}", adjusted.abs())
+        format!("{first}{rest}E{exp_sign}{}", adjusted.unsigned_abs())
     };
     Cow::Owned(format!("{sign}{body}"))
 }
@@ -158,9 +164,12 @@ fn run_with_input(filter_str: &str, input_val: Val) -> Result<Vec<Val>> {
         .id
         .run((ctx, input_val))
         .map(|r| {
-            unwrap_valr(r)
-                .map(to_json_numbers)
-                .map_err(|e| anyhow!("runtime error: {e}"))
+            let v = unwrap_valr(r).map_err(|e| anyhow!("runtime error: {e}"))?;
+            Ok(if needs_json_numbers(&v)? {
+                to_json_numbers(v)
+            } else {
+                v
+            })
         })
         .collect()
 }
@@ -169,9 +178,6 @@ fn run_with_input(filter_str: &str, input_val: Val) -> Result<Vec<Val>> {
 /// floats and prints them as `1.0`, `1e20`, `NaN` or `Infinity`; jq prints
 /// `1`, `1e+20`, `null` and the largest finite double instead.
 fn to_json_numbers(v: Val) -> Val {
-    if !needs_json_numbers(&v) {
-        return v;
-    }
     match v {
         Val::Num(Num::Dec(d)) => Val::Num(Num::Dec(Rc::new(canonical_decimal(&d).into_owned()))),
         Val::Num(Num::Float(f)) if f.is_nan() => Val::Null,
@@ -193,16 +199,25 @@ fn to_json_numbers(v: Val) -> Val {
     }
 }
 
-/// Decimals read from the input are already canonical; only those written
-/// in the filter (`1e2`) and floats need rewriting.
-fn needs_json_numbers(v: &Val) -> bool {
-    match v {
+/// Whether `v` holds numbers `to_json_numbers` rewrites. Decimals read from
+/// the input are already canonical; only those written in the filter (`1e2`)
+/// and floats need rewriting. Also rejects what JSON can't represent: jaq
+/// builds objects with non-string keys, which jq refuses.
+fn needs_json_numbers(v: &Val) -> Result<bool> {
+    Ok(match v {
         Val::Num(Num::Float(_)) => true,
         Val::Num(Num::Dec(d)) => matches!(canonical_decimal(d), Cow::Owned(ref c) if c != &**d),
-        Val::Arr(a) => a.iter().any(needs_json_numbers),
-        Val::Obj(o) => o.values().any(needs_json_numbers),
+        Val::Arr(a) => a.iter().try_fold(false, |any, v| -> Result<bool> {
+            Ok(needs_json_numbers(v)? || any)
+        })?,
+        Val::Obj(o) => o.iter().try_fold(false, |any, (k, v)| -> Result<bool> {
+            if !matches!(k, Val::TStr(_) | Val::BStr(_)) {
+                bail!("cannot use {k} as object key: object keys must be strings");
+            }
+            Ok(needs_json_numbers(v)? || any)
+        })?,
         _ => false,
-    }
+    })
 }
 
 /// Format a finite float like jq: the shortest digits that round-trip,
@@ -396,9 +411,22 @@ mod tests {
     }
 
     #[test]
+    fn test_canonical_decimal_keeps_out_of_range_exponents() {
+        for lit in ["1e-9999999999999999999", "1.0e-9223372036854775808"] {
+            assert_eq!(canonical_decimal(lit), lit);
+        }
+    }
+
+    #[test]
+    fn test_run_null_rejects_non_string_object_keys() {
+        let err = run_null("{(1): 2}").unwrap_err().to_string();
+        assert!(err.contains("object keys must be strings"), "got: {err}");
+    }
+
+    #[test]
     fn test_parse_keeps_number_literals() {
         let v = parse("[100000000000000000001, 1e1000, -0, +1, 0x1F, -0x10]").unwrap();
-        assert_eq!(v.to_string(), "[100000000000000000001,1E+1000,-0,1,31,-16]");
+        assert_eq!(v.to_string(), "[100000000000000000001,1E+1000,0,1,31,-16]");
     }
 
     #[test]
