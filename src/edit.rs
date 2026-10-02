@@ -145,12 +145,12 @@ fn to_cst_input(v: &Val) -> Result<CstInputValue> {
         Val::Null => CstInputValue::Null,
         Val::Bool(b) => CstInputValue::Bool(*b),
         Val::Num(n) => CstInputValue::Number(n.to_string()),
-        Val::TStr(s) | Val::BStr(s) => CstInputValue::String(utf8(s)?),
+        Val::TStr(s) | Val::BStr(s) => CstInputValue::String(utf8(s)),
         Val::Arr(a) => CstInputValue::Array(a.iter().map(to_cst_input).collect::<Result<_>>()?),
         Val::Obj(o) => CstInputValue::Object(
             o.iter()
                 .map(|(k, v)| match k {
-                    Val::TStr(k) | Val::BStr(k) => Ok((utf8(k)?, to_cst_input(v)?)),
+                    Val::TStr(k) | Val::BStr(k) => Ok((utf8(k), to_cst_input(v)?)),
                     other => bail!("object key is not a string: {other}"),
                 })
                 .collect::<Result<_>>()?,
@@ -158,8 +158,9 @@ fn to_cst_input(v: &Val) -> Result<CstInputValue> {
     })
 }
 
-fn utf8(bytes: &[u8]) -> Result<String> {
-    String::from_utf8(bytes.to_vec()).map_err(|e| anyhow!("string is not valid UTF-8: {e}"))
+/// Replace invalid UTF-8 with U+FFFD, as jq and jqc's other output do.
+fn utf8(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 /// Replace a CST node in-place with `value`.

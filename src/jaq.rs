@@ -202,16 +202,18 @@ fn to_json_numbers(v: Val) -> Val {
 /// Whether `v` holds numbers `to_json_numbers` rewrites. Decimals read from
 /// the input are already canonical; only those written in the filter (`1e2`)
 /// and floats need rewriting. Also rejects what JSON can't represent: jaq
-/// builds objects with non-string keys, which jq refuses.
+/// builds objects with non-string keys and byte strings, which jq can't.
 fn needs_json_numbers(v: &Val) -> Result<bool> {
     Ok(match v {
         Val::Num(Num::Float(_)) => true,
+        // jaq-only (`tobytes`); jq has no byte strings and JSON can't hold them.
+        Val::BStr(_) => bail!("cannot output a byte string"),
         Val::Num(Num::Dec(d)) => matches!(canonical_decimal(d), Cow::Owned(ref c) if c != &**d),
         Val::Arr(a) => a.iter().try_fold(false, |any, v| -> Result<bool> {
             Ok(needs_json_numbers(v)? || any)
         })?,
         Val::Obj(o) => o.iter().try_fold(false, |any, (k, v)| -> Result<bool> {
-            if !matches!(k, Val::TStr(_) | Val::BStr(_)) {
+            if !matches!(k, Val::TStr(_)) {
                 bail!("cannot use {k} as object key: object keys must be strings");
             }
             Ok(needs_json_numbers(v)? || any)
@@ -223,20 +225,29 @@ fn needs_json_numbers(v: &Val) -> Result<bool> {
 /// Format a finite float like jq: the shortest digits that round-trip,
 /// written in exponent form when the decimal point would sit more than 3
 /// places before the first digit or more than 15 places after the last.
+///
+/// The digits come from jaq's own float output (ryu), which breaks ties
+/// toward the even digit as jq does; Rust's `{:e}` doesn't.
 fn format_float(f: f64) -> String {
-    let sci = format!("{f:e}");
-    let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
-    let exp: i32 = exp.parse().expect("{:e} exponent is an integer");
-    let (sign, mantissa) = match mantissa.strip_prefix('-') {
-        Some(m) => ("-", m),
-        None => ("", mantissa),
+    let jaq = Num::Float(f).to_string();
+    let (sign, unsigned) = match jaq.strip_prefix('-') {
+        Some(rest) => ("-", rest),
+        None => ("", jaq.as_str()),
     };
-    let digits = mantissa.replace('.', "");
-    if digits == "0" {
+    let (mantissa, exp) = match unsigned.split_once('e') {
+        Some((m, e)) => (m, e.parse::<i32>().expect("ryu exponent is an integer")),
+        None => (unsigned, 0),
+    };
+    let (int, frac) = mantissa.split_once('.').unwrap_or((mantissa, ""));
+    let all = format!("{int}{frac}");
+    let leading = all.len() - all.trim_start_matches('0').len();
+    let digits = all[leading..].trim_end_matches('0');
+    if digits.is_empty() {
         return format!("{sign}0");
     }
     let n = digits.len() as i32;
-    let point = exp + 1;
+    // Where the decimal point sits relative to the first significant digit.
+    let point = int.len() as i32 + exp - leading as i32;
     let body = if point <= -4 || point > n + 15 {
         let (first, rest) = digits.split_at(1);
         let frac = if rest.is_empty() {
@@ -244,6 +255,7 @@ fn format_float(f: f64) -> String {
         } else {
             format!(".{rest}")
         };
+        let exp = point - 1;
         let exp_sign = if exp < 0 { '-' } else { '+' };
         format!("{first}{frac}e{exp_sign}{:02}", exp.abs())
     } else if point <= 0 {
@@ -424,6 +436,14 @@ mod tests {
     }
 
     #[test]
+    fn test_run_null_rejects_byte_strings() {
+        for filter in [r#""x" | tobytes"#, r#"{a: ("x" | tobytes)}"#] {
+            let err = run_null(filter).unwrap_err().to_string();
+            assert!(err.contains("byte string"), "{filter}: got {err}");
+        }
+    }
+
+    #[test]
     fn test_parse_keeps_number_literals() {
         let v = parse("[100000000000000000001, 1e1000, -0, +1, 0x1F, -0x10]").unwrap();
         assert_eq!(v.to_string(), "[100000000000000000001,1E+1000,0,1,31,-16]");
@@ -444,6 +464,8 @@ mod tests {
             (2.5e-8, "2.5e-08"),
             (5e-324, "5e-324"),
             (1e15, "1000000000000000"),
+            // Halfway between two shortest spellings: jq keeps the even digit.
+            (1e15 + 0.25, "1000000000000000.2"),
             (1e16, "1e+16"),
             (1.5e16, "15000000000000000"),
             (1.2345678901234568e17, "123456789012345680"),

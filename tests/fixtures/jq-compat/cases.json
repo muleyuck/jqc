@@ -148,6 +148,11 @@
       "note": "jq rejects the key when it compiles the filter. jaq builds the object, so jqc rejects it when it prints the result."
     },
     {
+      "name": "computed-number-tie",
+      "args": ["-n","-c","1000000000000000.25 * 1"],
+      "expect": ["1000000000000000.2"]
+    },
+    {
       "name": "nan",
       "args": ["-n","-c","nan"],
       "expect": ["null"]
@@ -282,6 +287,14 @@
       "stdin": "{\"a\":[9007199254740993]}",
       "expect": ["{\"a\":[9007199254740992.0,2]}"],
       "jqc": ["{\"a\":[9007199254740992.0, 2]}"],
+      "note": "Bug #68: -c is ignored in edit mode"
+    },
+    {
+      "name": "assign-invalid-utf8",
+      "args": ["-c",".a = (\"/w==\" | @base64d)"],
+      "stdin": "{}",
+      "expect": ["{\"a\":\"�\"}"],
+      "jqc": ["{","  \"a\": \"�\"","}"],
       "note": "Bug #68: -c is ignored in edit mode"
     },
     {
