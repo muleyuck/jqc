@@ -108,7 +108,7 @@ fn main() -> Result<()> {
                         jaq::run(&filter, &text)?
                     };
                     for val in values {
-                        print_value(&format!("{val}"), cli.raw, cli.compact, use_color)?;
+                        print_value(&val, cli.raw, cli.compact, use_color);
                     }
                     Ok(())
                 }
@@ -161,22 +161,21 @@ fn resolve_color(force_color: bool, monochrome: bool) -> bool {
     std::io::stdout().is_terminal()
 }
 
-fn print_value(output: &str, raw: bool, compact: bool, use_color: bool) -> Result<()> {
+fn print_value(val: &jaq_json::Val, raw: bool, compact: bool, use_color: bool) {
+    let output = val.to_string();
     // -r only affects strings; other values print as they would without it
     if raw && output.starts_with('"') && output.ends_with('"') {
         println!("{}", &output[1..output.len() - 1]);
     } else if compact {
         println!("{output}");
     } else {
-        let v: serde_json::Value = serde_json::from_str(output)?;
-        let pretty = serde_json::to_string_pretty(&v)?;
+        let pretty = jaq::to_pretty_json(val);
         if use_color {
             print_colored(&pretty);
         } else {
             println!("{pretty}");
         }
     }
-    Ok(())
 }
 
 /// Write `content` to `file` in-place (atomic via temp file), or to stdout if `file` is None.

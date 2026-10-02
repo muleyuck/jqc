@@ -98,17 +98,18 @@
       "name": "whole-float-result",
       "args": ["-c",".a + 0.5"],
       "stdin": "{\"a\":0.5}",
-      "expect": ["1"],
-      "jqc": ["1.0"],
-      "note": "Bug #67: computed numbers are formatted differently from jq"
+      "expect": ["1"]
     },
     {
       "name": "exponent-sign",
       "args": ["-c",". * 1e20"],
       "stdin": "1",
-      "expect": ["1e+20"],
-      "jqc": ["1e20"],
-      "note": "Bug #67: computed numbers are formatted differently from jq"
+      "expect": ["1e+20"]
+    },
+    {
+      "name": "computed-numbers-pretty",
+      "args": ["-n","[1e20*1, 0.5+0.5, 1e-5*1]"],
+      "expect": ["[","  1e+20,","  1,","  1e-05","]"]
     },
     {
       "name": "nan",
@@ -123,9 +124,7 @@
     {
       "name": "infinite",
       "args": ["-n","-c","[infinite,-infinite]"],
-      "expect": ["[1.7976931348623157e+308,-1.7976931348623157e+308]"],
-      "jqc": ["[1.7976931348623157e308,-1.7976931348623157e308]"],
-      "note": "Bug #67: computed numbers are formatted differently from jq"
+      "expect": ["[1.7976931348623157e+308,-1.7976931348623157e+308]"]
     },
     {
       "name": "assign-nan",
@@ -241,6 +240,12 @@
       "expect": ["{\"x\":{\"b\":1,\"a\":2}}"],
       "jqc": ["{\"x\":{","    \"b\": 1,","    \"a\": 2","  }}"],
       "note": "Bug #68: -c is ignored in edit mode"
+    },
+    {
+      "name": "assign-computed-numbers",
+      "args": ["-c",".a = .a + 0.5 | .b *= 1e20"],
+      "stdin": "{\"a\":0.5,\"b\":2}",
+      "expect": ["{\"a\":1,\"b\":2e+20}"]
     },
     {
       "name": "assign-array-element",

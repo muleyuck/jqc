@@ -1,6 +1,7 @@
 use anyhow::{Result, anyhow};
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, compile, data, load, val::unwrap_valr};
+use jaq_json::write::{Pp, write};
 use jaq_json::{Num, Rc, Val};
 use jsonc_parser::ParseOptions;
 
@@ -9,9 +10,13 @@ type CompileErrors<'a> = Vec<(File<&'a str, ()>, Vec<compile::Error<&'a str>>)>;
 /// Parse `text` as JSONC and apply `filter_str` as a jq filter.
 /// Returns all output values produced by the filter.
 pub fn run(filter_str: &str, text: &str) -> Result<Vec<Val>> {
-    let input_val = jsonc_parser::parse_to_serde_value::<Val>(text, &ParseOptions::default())
-        .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))?;
-    run_with_input(filter_str, input_val)
+    run_with_input(filter_str, parse(text)?)
+}
+
+/// Parse `text` as JSONC into a jaq value.
+pub fn parse(text: &str) -> Result<Val> {
+    jsonc_parser::parse_to_serde_value::<Val>(text, &ParseOptions::default())
+        .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))
 }
 
 /// Apply `filter_str` as a jq filter against `null` as the input value,
@@ -55,15 +60,23 @@ fn run_with_input(filter_str: &str, input_val: Val) -> Result<Vec<Val>> {
         .collect()
 }
 
-/// Replace numbers JSON can't represent the way jq prints them:
-/// NaN becomes `null` and ±infinity the largest finite double.
+/// Rewrite computed numbers the way jq prints them. jaq keeps them as
+/// floats and prints them as `1.0`, `1e20`, `NaN` or `Infinity`; jq prints
+/// `1`, `1e+20`, `null` and the largest finite double instead.
 fn to_json_numbers(v: Val) -> Val {
-    if !has_non_finite(&v) {
+    if !has_float(&v) {
         return v;
     }
     match v {
         Val::Num(Num::Float(f)) if f.is_nan() => Val::Null,
-        Val::Num(Num::Float(f)) if f.is_infinite() => Val::from(f64::MAX.copysign(f)),
+        Val::Num(Num::Float(f)) => {
+            let f = if f.is_infinite() {
+                f64::MAX.copysign(f)
+            } else {
+                f
+            };
+            Val::Num(Num::Dec(Rc::new(format_float(f))))
+        }
         Val::Arr(a) => a.iter().cloned().map(to_json_numbers).collect(),
         Val::Obj(o) => Val::Obj(Rc::new(
             o.iter()
@@ -74,13 +87,62 @@ fn to_json_numbers(v: Val) -> Val {
     }
 }
 
-fn has_non_finite(v: &Val) -> bool {
+fn has_float(v: &Val) -> bool {
     match v {
-        Val::Num(Num::Float(f)) => !f.is_finite(),
-        Val::Arr(a) => a.iter().any(has_non_finite),
-        Val::Obj(o) => o.values().any(has_non_finite),
+        Val::Num(Num::Float(_)) => true,
+        Val::Arr(a) => a.iter().any(has_float),
+        Val::Obj(o) => o.values().any(has_float),
         _ => false,
     }
+}
+
+/// Format a finite float like jq: the shortest digits that round-trip,
+/// written in exponent form when the decimal point would sit more than 3
+/// places before the first digit or more than 15 places after the last.
+fn format_float(f: f64) -> String {
+    let sci = format!("{f:e}");
+    let (mantissa, exp) = sci.split_once('e').expect("{:e} always has an exponent");
+    let exp: i32 = exp.parse().expect("{:e} exponent is an integer");
+    let (sign, mantissa) = match mantissa.strip_prefix('-') {
+        Some(m) => ("-", m),
+        None => ("", mantissa),
+    };
+    let digits = mantissa.replace('.', "");
+    if digits == "0" {
+        return format!("{sign}0");
+    }
+    let n = digits.len() as i32;
+    let point = exp + 1;
+    let body = if point <= -4 || point > n + 15 {
+        let (first, rest) = digits.split_at(1);
+        let frac = if rest.is_empty() {
+            String::new()
+        } else {
+            format!(".{rest}")
+        };
+        let exp_sign = if exp < 0 { '-' } else { '+' };
+        format!("{first}{frac}e{exp_sign}{:02}", exp.abs())
+    } else if point <= 0 {
+        format!("0.{}{digits}", "0".repeat(-point as usize))
+    } else if point >= n {
+        format!("{digits}{}", "0".repeat((point - n) as usize))
+    } else {
+        let (int, frac) = digits.split_at(point as usize);
+        format!("{int}.{frac}")
+    };
+    format!("{sign}{body}")
+}
+
+/// Pretty-print `v` the way jq does without `-c`.
+pub fn to_pretty_json(v: &Val) -> String {
+    let pp = Pp {
+        indent: Some("  ".to_string()),
+        sep_space: true,
+        ..Pp::default()
+    };
+    let mut out = Vec::new();
+    write(&mut out, &pp, 0, v).expect("writing to a Vec never fails");
+    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Format jaq-core load errors (lex / parse / io) into a user-readable string.
@@ -184,12 +246,38 @@ mod tests {
         assert_eq!(result.len(), 1);
         assert_eq!(
             result[0].to_string(),
-            format!(
-                "[null,{},{},{{\"a\":null}}]",
-                Val::from(f64::MAX),
-                Val::from(-f64::MAX)
-            )
+            r#"[null,1.7976931348623157e+308,-1.7976931348623157e+308,{"a":null}]"#
         );
+    }
+
+    #[test]
+    fn test_format_float_matches_jq() {
+        // Expected strings are jq 1.8.2's output for the same computed value.
+        let cases = [
+            (1.0, "1"),
+            (-0.0, "-0"),
+            (0.1, "0.1"),
+            (1.0 / 3.0, "0.3333333333333333"),
+            (0.0001, "0.0001"),
+            (0.00012345, "0.00012345"),
+            (0.00001, "1e-05"),
+            (0.000012345, "1.2345e-05"),
+            (2.5e-8, "2.5e-08"),
+            (5e-324, "5e-324"),
+            (1e15, "1000000000000000"),
+            (1e16, "1e+16"),
+            (1.5e16, "15000000000000000"),
+            (1.2345678901234568e17, "123456789012345680"),
+            (1.2345678901234568e21, "1234567890123456800000"),
+            (1e20, "1e+20"),
+            (-1e20, "-1e+20"),
+            (1.5e21, "1.5e+21"),
+            (1e100, "1e+100"),
+            (f64::MAX, "1.7976931348623157e+308"),
+        ];
+        for (f, want) in cases {
+            assert_eq!(format_float(f), want, "format_float({f:e})");
+        }
     }
 
     #[test]
