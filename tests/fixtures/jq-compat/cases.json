@@ -113,9 +113,25 @@
     {
       "name": "nan",
       "args": ["-n","-c","nan"],
-      "expect": ["null"],
-      "jqc": ["NaN"],
-      "note": "Bug #41: nan is printed as NaN instead of null"
+      "expect": ["null"]
+    },
+    {
+      "name": "nan-pretty",
+      "args": ["-n","[nan]"],
+      "expect": ["[","  null","]"]
+    },
+    {
+      "name": "infinite",
+      "args": ["-n","-c","[infinite,-infinite]"],
+      "expect": ["[1.7976931348623157e+308,-1.7976931348623157e+308]"],
+      "jqc": ["[1.7976931348623157e308,-1.7976931348623157e308]"],
+      "note": "Bug #67: computed numbers are formatted differently from jq"
+    },
+    {
+      "name": "assign-nan",
+      "args": ["-c",".a = nan"],
+      "stdin": "{\"a\":1}",
+      "expect": ["{\"a\":null}"]
     },
     {
       "name": "big-integer",
