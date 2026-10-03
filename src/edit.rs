@@ -138,20 +138,29 @@ fn parse_cst(text: &str) -> Result<CstRootNode> {
         .map_err(|e| anyhow!("Failed to parse JSONC: {e}"))
 }
 
-/// Convert a `serde_json::Value` to `CstInputValue` for CST mutations.
-fn to_cst_input(v: serde_json::Value) -> CstInputValue {
-    match v {
-        serde_json::Value::Null => CstInputValue::Null,
-        serde_json::Value::Bool(b) => CstInputValue::Bool(b),
-        serde_json::Value::Number(n) => CstInputValue::Number(n.to_string()),
-        serde_json::Value::String(s) => CstInputValue::String(s),
-        serde_json::Value::Array(arr) => {
-            CstInputValue::Array(arr.into_iter().map(to_cst_input).collect())
-        }
-        serde_json::Value::Object(obj) => {
-            CstInputValue::Object(obj.into_iter().map(|(k, v)| (k, to_cst_input(v))).collect())
-        }
-    }
+/// Convert a jaq result to `CstInputValue` for CST mutations. Numbers keep
+/// the text jaq prints for them, so they are written as jq would print them.
+fn to_cst_input(v: &Val) -> Result<CstInputValue> {
+    Ok(match v {
+        Val::Null => CstInputValue::Null,
+        Val::Bool(b) => CstInputValue::Bool(*b),
+        Val::Num(n) => CstInputValue::Number(n.to_string()),
+        Val::TStr(s) | Val::BStr(s) => CstInputValue::String(utf8(s)),
+        Val::Arr(a) => CstInputValue::Array(a.iter().map(to_cst_input).collect::<Result<_>>()?),
+        Val::Obj(o) => CstInputValue::Object(
+            o.iter()
+                .map(|(k, v)| match k {
+                    Val::TStr(k) | Val::BStr(k) => Ok((utf8(k), to_cst_input(v)?)),
+                    other => bail!("object key is not a string: {other}"),
+                })
+                .collect::<Result<_>>()?,
+        ),
+    })
+}
+
+/// Replace invalid UTF-8 with U+FFFD, as jq and jqc's other output do.
+fn utf8(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).into_owned()
 }
 
 /// Replace a CST node in-place with `value`.
@@ -196,18 +205,23 @@ fn replace_cst_node(node: CstNode, value: CstInputValue) -> Result<()> {
 /// `CstArray::append`, leaving the array's existing structure — and any
 /// comments within it — untouched. Otherwise `existing` is replaced
 /// wholesale with `new_val`.
-fn write_cst_value(existing: &CstNode, new_val: serde_json::Value) -> Result<()> {
-    if let (Some(arr), serde_json::Value::Array(new_elems)) = (existing.as_array(), &new_val)
-        && let Some(serde_json::Value::Array(existing_elems)) = arr.to_serde_value()
+fn write_cst_value(existing: &CstNode, new_val: &Val) -> Result<()> {
+    if let (Some(arr), Val::Arr(new_elems)) = (existing.as_array(), new_val)
+        && let Val::Arr(existing_elems) = jaq::parse(&arr.to_string())?
         && new_elems.len() > existing_elems.len()
-        && new_elems[..existing_elems.len()] == existing_elems[..]
+        // Compare the printed text: `Val` equality treats 9007199254740993
+        // and 9007199254740992.0 as equal through f64.
+        && new_elems
+            .iter()
+            .zip(existing_elems.iter())
+            .all(|(new, old)| new.to_string() == old.to_string())
     {
         for elem in &new_elems[existing_elems.len()..] {
-            arr.append(to_cst_input(elem.clone()));
+            arr.append(to_cst_input(elem)?);
         }
         return Ok(());
     }
-    replace_cst_node(existing.clone(), to_cst_input(new_val))
+    replace_cst_node(existing.clone(), to_cst_input(new_val)?)
 }
 
 /// Remove a CST node (used for array elements; object properties are
@@ -278,19 +292,16 @@ pub fn apply_assign(text: &str, path_expr: &str, filter_str: &str) -> Result<Str
 
     let root = parse_cst(text)?;
     for segments in matches {
-        let value_at_path = get_at_path(&whole_result, &segments)?;
-        let json_str = value_at_path.to_string();
-        let new_val: serde_json::Value = serde_json::from_str(&json_str)
-            .map_err(|e| anyhow!("failed to convert evaluated value to JSON: {e}"))?;
+        let new_val = get_at_path(&whole_result, &segments)?;
 
         let Some((last, parent_segments)) = segments.split_last() else {
             let target = navigate(&root, &segments)?;
-            write_cst_value(&target, new_val)?;
+            write_cst_value(&target, &new_val)?;
             continue;
         };
         let PathSegment::Key(key) = last else {
             let target = navigate(&root, &segments)?;
-            write_cst_value(&target, new_val)?;
+            write_cst_value(&target, &new_val)?;
             continue;
         };
         let parent = navigate(&root, parent_segments)?;
@@ -305,10 +316,10 @@ pub fn apply_assign(text: &str, path_expr: &str, filter_str: &str) -> Result<Str
                 let existing = prop
                     .value()
                     .ok_or_else(|| anyhow!("key {key:?} has no value"))?;
-                write_cst_value(&existing, new_val)?;
+                write_cst_value(&existing, &new_val)?;
             }
             None => {
-                obj.append(key, to_cst_input(new_val));
+                obj.append(key, to_cst_input(&new_val)?);
             }
         }
     }
@@ -338,7 +349,7 @@ pub fn del(text: &str, path_expr: &str) -> Result<String> {
             let Ok(target) = navigate(&root, &segments) else {
                 continue; // no-op: root has no value (e.g. empty document)
             };
-            write_cst_value(&target, serde_json::Value::Null)?;
+            write_cst_value(&target, &Val::Null)?;
             continue;
         };
         let Ok(parent_node) = navigate(&root, parent_segments) else {

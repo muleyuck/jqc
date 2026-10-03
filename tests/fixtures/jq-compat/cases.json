@@ -98,17 +98,64 @@
       "name": "whole-float-result",
       "args": ["-c",".a + 0.5"],
       "stdin": "{\"a\":0.5}",
-      "expect": ["1"],
-      "jqc": ["1.0"],
-      "note": "Bug #67: computed numbers are formatted differently from jq"
+      "expect": ["1"]
     },
     {
       "name": "exponent-sign",
       "args": ["-c",". * 1e20"],
       "stdin": "1",
+      "expect": ["1e+20"]
+    },
+    {
+      "name": "computed-numbers-pretty",
+      "args": ["-n","[1e20*1, 0.5+0.5, 1e-5*1]"],
+      "expect": ["[","  1e+20,","  1,","  1e-05","]"]
+    },
+    {
+      "name": "number-literals",
+      "args": ["-c","."],
+      "stdin": "[1.000,1e2,-0.0,0.00001,-1e1000,1.5e300]",
+      "expect": ["[1.000,1E+2,-0.0,0.00001,-1E+1000,1.5E+300]"]
+    },
+    {
+      "name": "big-integer-arithmetic",
+      "args": ["-c",". + 0"],
+      "stdin": "100000000000000000001",
       "expect": ["1e+20"],
-      "jqc": ["1e20"],
-      "note": "Bug #67: computed numbers are formatted differently from jq"
+      "jqc": ["100000000000000000001"],
+      "note": "jaq computes with integers of any size, where jq converts them to doubles first."
+    },
+    {
+      "name": "negative-zero",
+      "args": ["-c","."],
+      "stdin": "-0",
+      "expect": ["-0"],
+      "jqc": ["0"],
+      "note": "jaq reads -0 as the integer 0. Keeping it an integer lets it index arrays, as it does in jq."
+    },
+    {
+      "name": "negative-zero-index",
+      "args": ["-c",". as $i | [\"first\"][$i]"],
+      "stdin": "-0",
+      "expect": ["\"first\""]
+    },
+    {
+      "name": "non-string-object-key",
+      "args": ["-n","{(1): \"x\"}"],
+      "expect": [],
+      "status": 3,
+      "jqc_status": 1,
+      "note": "jq rejects the key when it compiles the filter. jaq builds the object, so jqc rejects it when it prints the result."
+    },
+    {
+      "name": "computed-number-tie",
+      "args": ["-n","-c","1000000000000000.25 * 1"],
+      "expect": ["1000000000000000.2"]
+    },
+    {
+      "name": "tonumber-leading-zero",
+      "args": ["-n","-c","\"01.5\" | tonumber"],
+      "expect": ["1.5"]
     },
     {
       "name": "nan",
@@ -123,9 +170,7 @@
     {
       "name": "infinite",
       "args": ["-n","-c","[infinite,-infinite]"],
-      "expect": ["[1.7976931348623157e+308,-1.7976931348623157e+308]"],
-      "jqc": ["[1.7976931348623157e308,-1.7976931348623157e308]"],
-      "note": "Bug #67: computed numbers are formatted differently from jq"
+      "expect": ["[1.7976931348623157e+308,-1.7976931348623157e+308]"]
     },
     {
       "name": "assign-nan",
@@ -137,26 +182,19 @@
       "name": "big-integer",
       "args": ["."],
       "stdin": "100000000000000000001",
-      "expect": ["100000000000000000001"],
-      "jqc": ["1e+20"],
-      "note": "Bug #42: integers beyond f64 precision lose digits"
+      "expect": ["100000000000000000001"]
     },
     {
       "name": "big-integer-equality",
       "args": [". == 100000000000000000000"],
       "stdin": "100000000000000000001",
-      "expect": ["false"],
-      "jqc": ["true"],
-      "note": "Bug #42: integers beyond f64 precision lose digits"
+      "expect": ["false"]
     },
     {
       "name": "huge-number",
       "args": ["."],
       "stdin": "1e1000",
-      "expect": ["1E+1000"],
-      "jqc": [],
-      "jqc_status": 1,
-      "note": "Bug #43: numbers beyond the f64 range fail to parse"
+      "expect": ["1E+1000"]
     },
     {
       "name": "runtime-error-status",
@@ -243,6 +281,34 @@
       "note": "Bug #68: -c is ignored in edit mode"
     },
     {
+      "name": "assign-computed-numbers",
+      "args": ["-c",".a = .a + 0.5 | .b *= 1e20"],
+      "stdin": "{\"a\":0.5,\"b\":2}",
+      "expect": ["{\"a\":1,\"b\":2e+20}"]
+    },
+    {
+      "name": "assign-array-keeps-exact-numbers",
+      "args": ["-c",".a = [9007199254740992.0, 2]"],
+      "stdin": "{\"a\":[9007199254740993]}",
+      "expect": ["{\"a\":[9007199254740992.0,2]}"],
+      "jqc": ["{\"a\":[9007199254740992.0, 2]}"],
+      "note": "Bug #68: -c is ignored in edit mode"
+    },
+    {
+      "name": "assign-invalid-utf8",
+      "args": ["-c",".a = (\"/w==\" | @base64d)"],
+      "stdin": "{}",
+      "expect": ["{\"a\":\"�\"}"],
+      "jqc": ["{","  \"a\": \"�\"","}"],
+      "note": "Bug #68: -c is ignored in edit mode"
+    },
+    {
+      "name": "assign-tonumber-leading-zero",
+      "args": ["-c",".a = (\"01.5\" | tonumber)"],
+      "stdin": "{\"a\":0}",
+      "expect": ["{\"a\":1.5}"]
+    },
+    {
       "name": "assign-array-element",
       "args": ["-c",".a[1] = 9"],
       "stdin": "{\"a\":[1,2,3]}",
@@ -290,9 +356,7 @@
       "name": "big-integer-rewrite",
       "args": ["-c",".a |= ."],
       "stdin": "{\"a\":100000000000000000001}",
-      "expect": ["{\"a\":100000000000000000001}"],
-      "jqc": ["{\"a\":1e+20}"],
-      "note": "Bug #42: integers beyond f64 precision lose digits"
+      "expect": ["{\"a\":100000000000000000001}"]
     },
     {
       "name": "assign-missing-parent",
