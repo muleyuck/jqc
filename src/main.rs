@@ -1,3 +1,4 @@
+mod args;
 mod color;
 mod edit;
 mod edit_detect;
