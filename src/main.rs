@@ -2,6 +2,7 @@ mod color;
 mod edit;
 mod edit_detect;
 mod jaq;
+mod jsonc;
 
 use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand};
