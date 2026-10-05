@@ -157,7 +157,7 @@ fn reject_jq_options(run: &Run) -> anyhow::Result<()> {
     for a in &run.jq_args {
         if !filter_skipped && Some(a) == run.filter.as_ref() {
             filter_skipped = true;
-        } else if !is_accepted(a) {
+        } else if a != "--" && !is_accepted(a) {
             rejected.push(a.as_str());
         }
     }
@@ -191,9 +191,12 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
     }
 
     if run.raw_input {
-        // -R reads text, not JSON, so jq reads the inputs itself.
+        // -R reads text, not JSON, so jq reads the inputs itself, with each
+        // file back where it was (it matters relative to --args).
         let mut jq_args = run.jq_args;
-        jq_args.extend(run.files);
+        for (file, position) in run.files.into_iter().zip(run.file_positions).rev() {
+            jq_args.insert(position, file);
+        }
         let mut child = jq::spawn(&jq_args, Stdio::inherit()).map_err(fail(2))?;
         let status = child.wait().map_err(|e| fail(2)(e.into()))?;
         return Ok(exit_code(status));
@@ -203,7 +206,7 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
     let mut stdin = child.stdin.take().expect("jq's stdin is piped");
     let failures = Arc::new(Mutex::new(Failures::default()));
     let feeder_failures = Arc::clone(&failures);
-    let (files, null_input) = (run.files, run.null_input);
+    let (files, null_input, exit_status) = (run.files, run.null_input, run.exit_status);
     thread::spawn(move || {
         feed(&mut stdin, &files, null_input, &feeder_failures);
         // Closing stdin after recording the failures lets jq finish first.
@@ -230,11 +233,13 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
         }
     }
     // Like jq, an unopenable file gives 2 over jq's own status. With -e jq
-    // exits 1 for a falsy result, which must not hide a parse failure.
+    // exits 1 for a falsy result and 4 for no result, which must not hide a
+    // parse failure; without -e those statuses come from halt_error.
     if read.is_some() {
         return Ok(ExitCode::from(2));
     }
-    if parse.is_some() && matches!(status.code(), Some(0 | 1)) {
+    let no_or_falsy_output = exit_status && matches!(status.code(), Some(1 | 4));
+    if parse.is_some() && (status.success() || no_or_falsy_output) {
         return Ok(ExitCode::from(5));
     }
     Ok(exit_code(status))
@@ -270,16 +275,27 @@ fn feed(jq: &mut impl Write, files: &[String], null_input: bool, failures: &Mute
                 continue;
             }
         };
-        let json = match jsonc::convert(&text, file.unwrap_or("<stdin>")) {
-            Ok(values) => values.join("\n") + "\n",
+        let prefix = jsonc::convert_prefix(&text, file.unwrap_or("<stdin>"));
+        let json = match prefix.error {
             // Under -n jq reads input only if the filter asks for it, so jq
             // decides whether this input is an error.
-            Err(_) if null_input => text,
-            Err(e) => {
-                failures.lock().unwrap().parse = Some(e);
-                return;
+            Some(_) if null_input => text,
+            // The values before the broken one, then a token jq always
+            // rejects: jq processes those values and fails where the broken
+            // one was, as it would on the original input. (The original rest
+            // isn't enough: jq accepts some things jsonc-parser rejects.)
+            Some(_) => {
+                let mut json: String = prefix.values.iter().map(|v| format!("{v}\n")).collect();
+                json.push_str("]\n");
+                json
             }
+            None => prefix.values.iter().map(|v| format!("{v}\n")).collect(),
         };
+        if let Some(e) = prefix.error.filter(|_| !null_input) {
+            failures.lock().unwrap().parse = Some(e);
+            let _ = jq.write_all(json.as_bytes());
+            return;
+        }
         if jq.write_all(json.as_bytes()).is_err() {
             return;
         }

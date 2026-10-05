@@ -23,6 +23,10 @@ pub struct Run {
     /// The filter text, unless jq reads it from a file (`-f`).
     pub filter: Option<String>,
     pub files: Vec<String>,
+    /// Where each file stood among `jq_args`: the number of `jq_args` before
+    /// it. jq reads `-R` input itself, and a file's position relative to
+    /// `--args` matters there.
+    pub file_positions: Vec<usize>,
     /// Positions in `jq_args` of `--slurpfile` paths, which jqc converts.
     pub slurpfiles: Vec<usize>,
     pub null_input: bool,
@@ -30,6 +34,8 @@ pub struct Run {
     /// `-C` is `Some(true)` and `-M` `Some(false)`; the last one wins.
     pub color: Option<bool>,
     pub in_place: bool,
+    /// `-e`: jq's exit status then reflects the last output.
+    pub exit_status: bool,
 }
 
 pub const COLOR_OPTIONS: [&str; 4] = ["-C", "-M", "--color-output", "--monochrome-output"];
@@ -69,6 +75,7 @@ pub fn parse(args: Vec<String>) -> Result<Command> {
             } else if positional_values {
                 run.jq_args.push(arg);
             } else {
+                run.file_positions.push(run.jq_args.len());
                 run.files.push(arg);
             }
             continue;
@@ -96,6 +103,10 @@ pub fn parse(args: Vec<String>) -> Result<Command> {
             }
             "--from-file" => {
                 from_file = true;
+                run.jq_args.push(arg);
+            }
+            "--exit-status" => {
+                run.exit_status = true;
                 run.jq_args.push(arg);
             }
             "--null-input" => {
@@ -126,6 +137,7 @@ pub fn parse(args: Vec<String>) -> Result<Command> {
                         'C' => run.color = Some(true),
                         'M' => run.color = Some(false),
                         'f' => from_file = true,
+                        'e' => run.exit_status = true,
                         'L' => {
                             // `-L dir`, or `-Ldir` with the directory attached.
                             if i + 1 == cluster.len() {
@@ -311,6 +323,22 @@ mod tests {
         let r = run(&["--slurpfile", "v"]);
         assert!(r.slurpfiles.is_empty());
         assert_eq!(r.jq_args, strings(&["--slurpfile", "v"]));
+    }
+
+    #[test]
+    fn test_file_positions() {
+        let r = run(&["-R", ".", "a.txt", "--args", "x", "b.txt"]);
+        assert_eq!(r.files, strings(&["a.txt"]));
+        assert_eq!(r.file_positions, vec![2]);
+        assert_eq!(r.jq_args, strings(&["-R", ".", "--args", "x", "b.txt"]));
+    }
+
+    #[test]
+    fn test_exit_status_option() {
+        assert!(run(&["-e", "."]).exit_status);
+        assert!(run(&["-ce", "."]).exit_status);
+        assert!(run(&["--exit-status", "."]).exit_status);
+        assert!(!run(&["."]).exit_status);
     }
 
     #[test]

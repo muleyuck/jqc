@@ -1316,3 +1316,92 @@ fn dash_reads_stdin() {
         .success()
         .stdout("{\"a\":1}\n");
 }
+
+#[test]
+fn values_before_a_broken_value_are_output() {
+    jqc()
+        .args(["-c", "."])
+        .write_stdin("1 {\"x\": }")
+        .assert()
+        .code(5)
+        .stdout("1\n")
+        .stderr(contains("Failed to parse JSONC in <stdin>"));
+}
+
+#[test]
+fn raw_input_files_keep_their_position_before_args() {
+    let dir = tempfile::tempdir().unwrap();
+    let lines = dir.path().join("lines");
+    fs::write(&lines, "L1\n").unwrap();
+    jqc()
+        .args([
+            "-Rc",
+            "[., $ARGS.positional]",
+            lines.to_str().unwrap(),
+            "--args",
+            "x",
+        ])
+        .assert()
+        .success()
+        .stdout("[\"L1\",[\"x\"]]\n");
+}
+
+#[test]
+fn exit_status_option_without_output_keeps_broken_input_failure() {
+    // jq -e exits 4 when there is no output; the broken input must still give 5.
+    jqc()
+        .args(["-e", "."])
+        .write_stdin("{\"x\": }")
+        .assert()
+        .code(5);
+}
+
+#[test]
+fn edit_accepts_double_dash() {
+    jqc()
+        .args(["--", ".a = 2"])
+        .write_stdin("{}")
+        .assert()
+        .success()
+        .stdout(contains("\"a\""));
+}
+
+#[test]
+fn inputs_see_the_broken_input() {
+    // jq fails when `inputs` reaches the broken value, so nothing is output.
+    jqc()
+        .args(["-c", "[., inputs]"])
+        .write_stdin("1 {\"x\": }")
+        .assert()
+        .code(5)
+        .stdout("");
+}
+
+#[test]
+fn halt_error_status_is_kept_without_exit_status_option() {
+    let dir = tempfile::tempdir().unwrap();
+    let good = dir.path().join("good.jsonc");
+    let bad = dir.path().join("bad.jsonc");
+    fs::write(&good, "1").unwrap();
+    fs::write(&bad, "{\"x\": }").unwrap();
+    jqc()
+        .args([
+            "halt_error(4)",
+            good.to_str().unwrap(),
+            bad.to_str().unwrap(),
+        ])
+        .assert()
+        .code(4);
+}
+
+#[test]
+fn jq_stops_at_a_value_jqc_rejects() {
+    // jsonc-parser rejects a lone surrogate that jq would accept; jq must
+    // still stop there instead of processing it and the values after it.
+    jqc()
+        .args(["-c", "[., inputs]"])
+        .write_stdin("1 \"\\udc00\" 3")
+        .assert()
+        .code(5)
+        .stdout("");
+}
