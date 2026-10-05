@@ -1405,3 +1405,45 @@ fn jq_stops_at_a_value_jqc_rejects() {
         .code(5)
         .stdout("");
 }
+
+#[test]
+fn caught_input_error_keeps_jq_status() {
+    jqc()
+        .args(["-c", "[try inputs catch \"handled\"]"])
+        .write_stdin("1 {\"bad\":}")
+        .assert()
+        .success()
+        .stdout("[\"handled\"]\n");
+}
+
+#[test]
+fn null_input_keeps_values_before_broken_input() {
+    jqc()
+        .args(["-nc", "input"])
+        .write_stdin("// comment\n1 {\"bad\":}")
+        .assert()
+        .success()
+        .stdout("1\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn non_utf8_argument_is_an_error() {
+    use std::os::unix::ffi::OsStrExt;
+    jqc()
+        .arg(std::ffi::OsStr::from_bytes(b"\xff"))
+        .assert()
+        .code(2)
+        .stderr(contains("not valid UTF-8"));
+}
+
+#[test]
+fn caught_input_error_with_exit_status_is_not_reported() {
+    // -e gives 1 for the false output; the input error was caught.
+    jqc()
+        .args(["-ne", "try input catch false"])
+        .write_stdin("{\"bad\":}")
+        .assert()
+        .code(1)
+        .stderr("");
+}

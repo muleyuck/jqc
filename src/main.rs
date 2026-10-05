@@ -49,7 +49,18 @@ fn fail(status: u8) -> impl FnOnce(anyhow::Error) -> Failure {
 }
 
 fn main() -> ExitCode {
-    match run(std::env::args().skip(1).collect()) {
+    let args: Result<Vec<String>, _> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.into_string())
+        .collect();
+    let args = match args {
+        Ok(args) => args,
+        Err(arg) => {
+            eprintln!("Error: argument is not valid UTF-8: {arg:?}");
+            return ExitCode::from(2);
+        }
+    };
+    match run(args) {
         Ok(code) => code,
         Err(Failure { status, error }) => {
             eprintln!("Error: {error:?}");
@@ -206,9 +217,9 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
     let mut stdin = child.stdin.take().expect("jq's stdin is piped");
     let failures = Arc::new(Mutex::new(Failures::default()));
     let feeder_failures = Arc::clone(&failures);
-    let (files, null_input, exit_status) = (run.files, run.null_input, run.exit_status);
+    let files = run.files;
     thread::spawn(move || {
-        feed(&mut stdin, &files, null_input, &feeder_failures);
+        feed(&mut stdin, &files, &feeder_failures);
         // Closing stdin after recording the failures lets jq finish first.
         drop(stdin);
     });
@@ -222,8 +233,15 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
         return Ok(exit_code(status));
     }
     let Failures { read, parse } = std::mem::take(&mut *failures.lock().unwrap());
-    for failure in read.iter().chain(&parse) {
-        eprintln!("Error: {failure:?}");
+    if let Some(read) = &read {
+        eprintln!("Error: {read:?}");
+    }
+    // jq reads a token it rejects where the broken value was, so its own
+    // status already says whether the filter hit the error (5, jq's status
+    // for input it can't parse) or caught or never read it. jqc only adds
+    // where the input really broke.
+    if let Some(parse) = parse.filter(|_| status.code() == Some(5)) {
+        eprintln!("Error: {parse:?}");
     }
     #[cfg(unix)]
     {
@@ -232,15 +250,9 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
             return Ok(exit_code(status));
         }
     }
-    // Like jq, an unopenable file gives 2 over jq's own status. With -e jq
-    // exits 1 for a falsy result and 4 for no result, which must not hide a
-    // parse failure; without -e those statuses come from halt_error.
+    // Like jq, an unopenable file gives 2 over jq's own status.
     if read.is_some() {
         return Ok(ExitCode::from(2));
-    }
-    let no_or_falsy_output = exit_status && matches!(status.code(), Some(1 | 4));
-    if parse.is_some() && (status.success() || no_or_falsy_output) {
-        return Ok(ExitCode::from(5));
     }
     Ok(exit_code(status))
 }
@@ -257,7 +269,7 @@ struct Failures {
 
 /// Writes the inputs to jq as JSON, one file after another. Stops quietly
 /// when jq stops reading.
-fn feed(jq: &mut impl Write, files: &[String], null_input: bool, failures: &Mutex<Failures>) {
+fn feed(jq: &mut impl Write, files: &[String], failures: &Mutex<Failures>) {
     let inputs: Vec<Option<&str>> = if files.is_empty() {
         vec![None]
     } else {
@@ -276,22 +288,14 @@ fn feed(jq: &mut impl Write, files: &[String], null_input: bool, failures: &Mute
             }
         };
         let prefix = jsonc::convert_prefix(&text, file.unwrap_or("<stdin>"));
-        let json = match prefix.error {
-            // Under -n jq reads input only if the filter asks for it, so jq
-            // decides whether this input is an error.
-            Some(_) if null_input => text,
-            // The values before the broken one, then a token jq always
-            // rejects: jq processes those values and fails where the broken
-            // one was, as it would on the original input. (The original rest
-            // isn't enough: jq accepts some things jsonc-parser rejects.)
-            Some(_) => {
-                let mut json: String = prefix.values.iter().map(|v| format!("{v}\n")).collect();
-                json.push_str("]\n");
-                json
-            }
-            None => prefix.values.iter().map(|v| format!("{v}\n")).collect(),
-        };
-        if let Some(e) = prefix.error.filter(|_| !null_input) {
+        let mut json: String = prefix.values.iter().map(|v| format!("{v}\n")).collect();
+        if let Some(e) = prefix.error {
+            // After the values before the broken one, a token jq always
+            // rejects: jq fails where the broken value was only if it reads
+            // that far (not under -n unless the filter asks for input), as
+            // it would on the original input. The original rest isn't enough:
+            // jq accepts some things jsonc-parser rejects.
+            json.push_str("]\n");
             failures.lock().unwrap().parse = Some(e);
             let _ = jq.write_all(json.as_bytes());
             return;

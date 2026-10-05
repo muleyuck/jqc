@@ -34,8 +34,6 @@ pub struct Run {
     /// `-C` is `Some(true)` and `-M` `Some(false)`; the last one wins.
     pub color: Option<bool>,
     pub in_place: bool,
-    /// `-e`: jq's exit status then reflects the last output.
-    pub exit_status: bool,
 }
 
 pub const COLOR_OPTIONS: [&str; 4] = ["-C", "-M", "--color-output", "--monochrome-output"];
@@ -105,10 +103,6 @@ pub fn parse(args: Vec<String>) -> Result<Command> {
                 from_file = true;
                 run.jq_args.push(arg);
             }
-            "--exit-status" => {
-                run.exit_status = true;
-                run.jq_args.push(arg);
-            }
             "--null-input" => {
                 run.null_input = true;
                 run.jq_args.push(arg);
@@ -137,7 +131,6 @@ pub fn parse(args: Vec<String>) -> Result<Command> {
                         'C' => run.color = Some(true),
                         'M' => run.color = Some(false),
                         'f' => from_file = true,
-                        'e' => run.exit_status = true,
                         'L' => {
                             // `-L dir`, or `-Ldir` with the directory attached.
                             if i + 1 == cluster.len() {
@@ -173,8 +166,16 @@ fn parse_fmt(args: Vec<String>) -> Result<Command> {
     let mut file = None;
     let mut in_place = false;
     let mut color = None;
+    let mut options_ended = false;
     for arg in args {
         match arg.as_str() {
+            _ if options_ended => {
+                if file.is_some() {
+                    bail!("fmt takes one file, got another: {arg}");
+                }
+                file = Some(arg);
+            }
+            "--" => options_ended = true,
             "--in-place" => in_place = true,
             "-C" | "--color-output" => color = Some(true),
             "-M" | "--monochrome-output" => color = Some(false),
@@ -334,14 +335,6 @@ mod tests {
     }
 
     #[test]
-    fn test_exit_status_option() {
-        assert!(run(&["-e", "."]).exit_status);
-        assert!(run(&["-ce", "."]).exit_status);
-        assert!(run(&["--exit-status", "."]).exit_status);
-        assert!(!run(&["."]).exit_status);
-    }
-
-    #[test]
     fn test_dash_is_a_positional() {
         assert_eq!(run(&[".", "-"]).files, strings(&["-"]));
     }
@@ -398,6 +391,14 @@ mod tests {
                 file: Some("x.jsonc".into()),
                 in_place: false,
                 color: Some(false)
+            }
+        );
+        assert_eq!(
+            fmt(&["fmt", "--", "-data.jsonc"]),
+            Command::Fmt {
+                file: Some("-data.jsonc".into()),
+                in_place: false,
+                color: None
             }
         );
         assert!(parse(strings(&["fmt", "-c"])).is_err());
