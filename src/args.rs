@@ -32,7 +32,7 @@ pub struct Run {
     pub in_place: bool,
 }
 
-const COLOR_OPTIONS: [&str; 4] = ["-C", "-M", "--color-output", "--monochrome-output"];
+pub const COLOR_OPTIONS: [&str; 4] = ["-C", "-M", "--color-output", "--monochrome-output"];
 
 /// `args` excludes the program name.
 pub fn parse(args: Vec<String>) -> Result<Command> {
