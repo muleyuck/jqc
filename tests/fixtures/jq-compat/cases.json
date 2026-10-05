@@ -121,17 +121,13 @@
       "name": "big-integer-arithmetic",
       "args": ["-c",". + 0"],
       "stdin": "100000000000000000001",
-      "expect": ["1e+20"],
-      "jqc": ["100000000000000000001"],
-      "note": "jaq computes with integers of any size, where jq converts them to doubles first."
+      "expect": ["1e+20"]
     },
     {
       "name": "negative-zero",
       "args": ["-c","."],
       "stdin": "-0",
-      "expect": ["-0"],
-      "jqc": ["0"],
-      "note": "jaq reads -0 as the integer 0. Keeping it an integer lets it index arrays, as it does in jq."
+      "expect": ["-0"]
     },
     {
       "name": "negative-zero-index",
@@ -143,9 +139,7 @@
       "name": "non-string-object-key",
       "args": ["-n","{(1): \"x\"}"],
       "expect": [],
-      "status": 3,
-      "jqc_status": 1,
-      "note": "jq rejects the key when it compiles the filter. jaq builds the object, so jqc rejects it when it prints the result."
+      "status": 3
     },
     {
       "name": "computed-number-tie",
@@ -201,36 +195,26 @@
       "args": [".a"],
       "stdin": "1",
       "expect": [],
-      "status": 5,
-      "jqc_status": 1,
-      "note": "Bug #44: exits with status 1 instead of 5 on runtime errors and invalid input"
+      "status": 5
     },
     {
       "name": "invalid-input-status",
       "args": ["."],
       "stdin": "not json",
       "expect": [],
-      "status": 5,
-      "jqc_status": 1,
-      "note": "Bug #44: exits with status 1 instead of 5 on runtime errors and invalid input"
+      "status": 5
     },
     {
       "name": "multiple-stdin-values",
       "args": ["-c","."],
       "stdin": "1 2",
-      "expect": ["1","2"],
-      "jqc": [],
-      "jqc_status": 1,
-      "note": "Bug #50: multiple JSON values on stdin fail to parse"
+      "expect": ["1","2"]
     },
     {
       "name": "multiple-files",
       "args": ["-c",".a","f1.json","f2.json"],
       "files": {"f1.json":"{\"a\":1}","f2.json":"{\"a\":2}"},
-      "expect": ["1","2"],
-      "jqc": [],
-      "jqc_status": 2,
-      "note": "Bug #51: only one input file is accepted"
+      "expect": ["1","2"]
     },
     {
       "name": "assign",
@@ -364,7 +348,7 @@
       "stdin": "{}",
       "expect": ["{\"a\":{\"b\":1}}"],
       "jqc": [],
-      "jqc_status": 1,
+      "jqc_status": 5,
       "note": "Bug #45: assigning under a missing or null parent errors instead of creating it"
     },
     {
@@ -373,7 +357,7 @@
       "stdin": "{\"a\":[5]}",
       "expect": ["{\"a\":[5,1]}"],
       "jqc": [],
-      "jqc_status": 1,
+      "jqc_status": 5,
       "note": "Bug #46: assigning past the end of an array errors instead of extending it"
     },
     {
@@ -382,7 +366,7 @@
       "stdin": "{\"a\":[1,2,3]}",
       "expect": ["{\"a\":[1,2,0]}"],
       "jqc": [],
-      "jqc_status": 1,
+      "jqc_status": 5,
       "note": "Bug #47: assignments to negative array indexes error"
     },
     {
@@ -391,7 +375,7 @@
       "stdin": "{\"a\":[1,2,3]}",
       "expect": ["{\"a\":[1]}"],
       "jqc": [],
-      "jqc_status": 1,
+      "jqc_status": 5,
       "note": "Bug #48: assignments to array slices error"
     },
     {
@@ -400,7 +384,7 @@
       "stdin": "{\"a\":1,\"b\":2,\"c\":3}",
       "expect": ["{\"c\":3}"],
       "jqc": [],
-      "jqc_status": 1,
+      "jqc_status": 5,
       "note": "Bug #49: del() with multiple paths errors"
     },
     {
@@ -409,8 +393,16 @@
       "stdin": "{\"a\":0}",
       "expect": ["{\"a\":1}","{\"a\":2}"],
       "jqc": [],
-      "jqc_status": 1,
+      "jqc_status": 5,
       "note": "Bug #66: edit expressions with multiple results error instead of printing each result"
+    },
+    {
+      "name": "input-filename",
+      "args": ["-c","input_filename","f.json"],
+      "files": {"f.json": "1"},
+      "expect": ["\"f.json\""],
+      "jqc": ["\"<stdin>\""],
+      "note": "jqc converts the inputs and passes them to jq on stdin, so jq sees no file name."
     }
   ]
 }
