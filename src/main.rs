@@ -5,6 +5,7 @@ mod edit_detect;
 mod jaq;
 mod jq;
 mod jsonc;
+mod patch;
 
 use std::io::{self, Read, Write};
 use std::process::{ExitCode, ExitStatus, Stdio};
