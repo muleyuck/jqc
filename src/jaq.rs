@@ -4,7 +4,6 @@ use anyhow::{Result, anyhow, bail};
 use jaq_core::load::{Arena, File, Loader};
 use jaq_core::{Compiler, Ctx, Vars, compile, data, load, val::unwrap_valr};
 use jaq_json::read::parse_single_num;
-use jaq_json::write::{Pp, write};
 use jaq_json::{Map, Num, Rc, Val};
 use jsonc_parser::{JsonValue, ParseOptions};
 
@@ -134,6 +133,7 @@ fn is_canonical_plain(lit: &str) -> bool {
 
 /// Apply `filter_str` as a jq filter against `null` as the input value,
 /// without reading or parsing any input text (jq `-n` / `--null-input` behavior).
+#[cfg(test)]
 pub fn run_null(filter_str: &str) -> Result<Vec<Val>> {
     run_with_input(filter_str, Val::Null)
 }
@@ -269,18 +269,6 @@ fn format_float(f: f64) -> String {
         format!("{int}.{frac}")
     };
     format!("{sign}{body}")
-}
-
-/// Pretty-print `v` the way jq does without `-c`.
-pub fn to_pretty_json(v: &Val) -> String {
-    let pp = Pp {
-        indent: Some("  ".to_string()),
-        sep_space: true,
-        ..Pp::default()
-    };
-    let mut out = Vec::new();
-    write(&mut out, &pp, 0, v).expect("writing to a Vec never fails");
-    String::from_utf8_lossy(&out).into_owned()
 }
 
 /// Format jaq-core load errors (lex / parse / io) into a user-readable string.
