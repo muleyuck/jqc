@@ -2,6 +2,8 @@
 //! what differs from the original value is written into the original text,
 //! so comments and formatting elsewhere stay as they are.
 
+use std::collections::HashMap;
+
 use anyhow::{Result, anyhow, bail};
 use jsonc_parser::cst::{
     CstArray, CstContainerNode, CstInputValue, CstLeafNode, CstNode, CstObject, CstObjectProp,
@@ -48,23 +50,36 @@ fn write_node(node: &CstNode, old: &JsonValue, new: &JsonValue) -> Result<()> {
                 .ok_or_else(|| anyhow!("expected an array in the JSONC text"))?;
             write_array(node, &arr, old, new)
         }
-        _ => replace(node.clone(), to_cst_input(new)),
+        _ => {
+            if !set_in_place(node, new) {
+                replace(node.clone(), to_cst_input(new))?;
+            }
+            Ok(())
+        }
     }
 }
 
 fn write_object(obj: &CstObject, old: &JsonObject, new: &JsonObject) -> Result<()> {
+    // In source order per key; JSONC allows duplicate keys.
+    let mut props: HashMap<String, Vec<CstObjectProp>> = HashMap::new();
+    for prop in obj.properties() {
+        if let Some(name) = prop.name().and_then(|name| name.decoded_value().ok()) {
+            props.entry(name).or_default().push(prop);
+        }
+    }
     for (key, old_value) in old.clone().take_inner().iter() {
         match new.get(key) {
             // jq treats duplicates as one key; any left behind would resurface.
             None => {
-                for prop in props_named(obj, key) {
+                for prop in props.remove(key.as_ref()).unwrap_or_default() {
                     prop.remove();
                 }
             }
             Some(new_value) if new_value != old_value => {
                 // jq reads duplicate keys last-wins.
-                let prop = props_named(obj, key)
-                    .pop()
+                let prop = props
+                    .get(key.as_ref())
+                    .and_then(|named| named.last())
                     .ok_or_else(|| anyhow!("key {key:?} not found in the JSONC text"))?;
                 let value = prop
                     .value()
@@ -100,19 +115,6 @@ fn write_array(node: &CstNode, arr: &CstArray, old: &JsonArray, new: &JsonArray)
     replace(node.clone(), to_cst_input(&JsonValue::Array(new.clone())))
 }
 
-/// In source order; JSONC allows duplicate keys.
-fn props_named(obj: &CstObject, key: &str) -> Vec<CstObjectProp> {
-    obj.properties()
-        .into_iter()
-        .filter(|prop| {
-            prop.name()
-                .and_then(|name| name.decoded_value().ok())
-                .as_deref()
-                == Some(key)
-        })
-        .collect()
-}
-
 /// Numbers keep the text jq printed; strings are written the CST's way.
 fn to_cst_input(value: &JsonValue) -> CstInputValue {
     match value {
@@ -129,6 +131,44 @@ fn to_cst_input(value: &JsonValue) -> CstInputValue {
                 .collect(),
         ),
     }
+}
+
+/// A scalar that keeps its kind is rewritten in place: replacing the node
+/// rescans its siblings for formatting, which makes bulk edits quadratic.
+fn set_in_place(node: &CstNode, new: &JsonValue) -> bool {
+    match (node, new) {
+        (CstNode::Leaf(CstLeafNode::NumberLit(n)), JsonValue::Number(v)) => {
+            n.set_raw_value(v.to_string())
+        }
+        (CstNode::Leaf(CstLeafNode::StringLit(n)), JsonValue::String(s)) => {
+            n.set_raw_value(escape_string(s))
+        }
+        (CstNode::Leaf(CstLeafNode::BooleanLit(n)), JsonValue::Boolean(b)) => n.set_value(*b),
+        _ => return false,
+    }
+    true
+}
+
+/// The escaping jsonc-parser uses for a new string (`CstStringLit::new_escaped`
+/// is private), so an in-place write reads like a replaced one.
+fn escape_string(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() + 2);
+    out.push('"');
+    for c in s.chars() {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            '\u{08}' => out.push_str("\\b"),
+            '\u{0c}' => out.push_str("\\f"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c.is_control() => out.push_str(&format!("\\u{:04x}", c as u32)),
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+    out
 }
 
 fn replace(node: CstNode, value: CstInputValue) -> Result<()> {
@@ -261,5 +301,57 @@ mod tests {
     fn test_numbers_are_written_as_jq_printed_them() {
         let out = patch(r#"{"a": 0x10}"#, r#"{"a":16}"#, r#"{"a":1E+2}"#);
         assert_eq!(out, r#"{"a": 1E+2}"#);
+    }
+
+    #[test]
+    fn test_same_kind_scalars_are_written_in_place() {
+        // In-place writes must look exactly like a replaced node did.
+        let text = "{\n  \"n\": 1, // n\n  \"s\": 'x', /* s */\n  \"b\": true\n}";
+        let out = patch(
+            text,
+            r#"{"n":1,"s":"x","b":true}"#,
+            r#"{"n":2.50,"s":"say \"hi\"\n\u0001","b":false}"#,
+        );
+        assert_eq!(
+            out,
+            "{\n  \"n\": 2.50, // n\n  \"s\": \"say \\\"hi\\\"\\n\\u0001\", /* s */\n  \"b\": false\n}"
+        );
+    }
+
+    #[test]
+    fn test_many_changed_values_are_written() {
+        let n = 3000;
+        let text = format!(
+            "{{\n{}\n}}",
+            (0..n)
+                .map(|i| format!("  \"k{i}\": {i}, // c"))
+                .collect::<Vec<_>>()
+                .join("\n")
+        );
+        let source = format!(
+            "{{{}}}",
+            (0..n)
+                .map(|i| format!("\"k{i}\":{i}"))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let result = format!(
+            "{{{}}}",
+            (0..n)
+                .map(|i| format!("\"k{i}\":{}", i + 1))
+                .collect::<Vec<_>>()
+                .join(",")
+        );
+        let start = std::time::Instant::now();
+        let out = patch(&text, &source, &result);
+        assert!(
+            out.contains("\"k0\": 1, // c") && out.contains(&format!("\"k{}\": {n}, // c", n - 1))
+        );
+        // Quadratic node replacement took over a second here; in place it is milliseconds.
+        assert!(
+            start.elapsed() < std::time::Duration::from_millis(500),
+            "{:?}",
+            start.elapsed()
+        );
     }
 }
