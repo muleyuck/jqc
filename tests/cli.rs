@@ -1718,6 +1718,17 @@ fn edit_turns_other_nan_into_null_like_jq() {
 }
 
 #[test]
+fn seq_value_glued_to_a_broken_one_is_skipped() {
+    // jq reads `1,` as one broken text, not `1` and then an error.
+    jqc()
+        .args(["--seq", "-c", "."])
+        .write_stdin("\x1e1,\n\x1e2\n\x1e3/*c*/{\"x\":}\n\x1e4\x0c,\n")
+        .assert()
+        .success()
+        .stdout("\x1e2\n\x1e3\n");
+}
+
+#[test]
 fn seq_keeps_values_before_a_broken_one() {
     jqc()
         .args(["--seq", "-c", "."])

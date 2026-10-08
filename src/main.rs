@@ -401,11 +401,14 @@ fn seq_records(text: &str) -> String {
         let prefix = jsonc::convert_prefix(part, "<seq>");
         out.push_str(&prefix.values.join("\n"));
         if prefix.error.is_some() {
-            // jq skips the broken remainder, as written, with a warning.
-            if !prefix.values.is_empty() {
+            // jq skips the broken remainder with a warning. A value glued
+            // to it (`1,`) must stay glued, so jq skips the value too;
+            // whitespace and comments in between become one newline.
+            let rest = skip_trivia(&part[prefix.rest..]);
+            if rest.len() < part.len() - prefix.rest {
                 out.push('\n');
             }
-            out.push_str(&part[prefix.rest..]);
+            out.push_str(rest);
         } else if part.len() > part.trim_end().len() || jsonc::ends_with_comment(part) {
             // jq reads a value as cut off only when the record's text
             // ends exactly at the value, so end it with a newline
@@ -414,6 +417,22 @@ fn seq_records(text: &str) -> String {
         }
     }
     out
+}
+
+/// `text` after its leading whitespace and comments. Only what jq reads as
+/// whitespace counts: a value followed by, say, a form feed is glued to
+/// what comes next for jq.
+fn skip_trivia(mut text: &str) -> &str {
+    loop {
+        let trimmed = text.trim_start_matches([' ', '\t', '\n', '\r']);
+        text = if let Some(rest) = trimmed.strip_prefix("//") {
+            rest.split_once('\n').map_or("", |(_, rest)| rest)
+        } else if let Some(rest) = trimmed.strip_prefix("/*") {
+            rest.split_once("*/").map_or("", |(_, rest)| rest)
+        } else {
+            return trimmed;
+        };
+    }
 }
 
 fn exit_code(status: ExitStatus) -> ExitCode {
