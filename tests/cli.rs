@@ -242,7 +242,7 @@ fn filter_invalid_syntax_error() {
 #[test]
 fn assign_number_preserves_comments() {
     let out = jqc()
-        .args([".port = 8080", &fixture("config.jsonc")])
+        .args(["--edit", ".port = 8080", &fixture("config.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -261,7 +261,7 @@ fn assign_number_preserves_comments() {
 #[test]
 fn assign_string_value() {
     let out = jqc()
-        .args([".host = \"production\"", &fixture("config.jsonc")])
+        .args(["--edit", ".host = \"production\"", &fixture("config.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -275,7 +275,7 @@ fn assign_string_value() {
 #[test]
 fn assign_nested_path() {
     jqc()
-        .args([".server.port = 9090"])
+        .args(["--edit", ".server.port = 9090"])
         .write_stdin(r#"{"server": {"port": 3000}}"#)
         .assert()
         .success()
@@ -286,7 +286,7 @@ fn assign_nested_path() {
 fn assign_update_operator_uses_current_value() {
     // |= : the RHS filter runs against the current value at the path
     jqc()
-        .args([".port |= . + 1"])
+        .args(["--edit", ".port |= . + 1"])
         .write_stdin(r#"{"port": 3000}"#)
         .assert()
         .success()
@@ -296,7 +296,7 @@ fn assign_update_operator_uses_current_value() {
 #[test]
 fn assign_update_math_operator() {
     jqc()
-        .args([".port += 1"])
+        .args(["--edit", ".port += 1"])
         .write_stdin(r#"{"port": 3000}"#)
         .assert()
         .success()
@@ -306,7 +306,7 @@ fn assign_update_math_operator() {
 #[test]
 fn assign_update_alt_operator_replaces_only_when_falsy() {
     jqc()
-        .args([".debug //= true"])
+        .args(["--edit", ".debug //= true"])
         .write_stdin(r#"{"debug": false}"#)
         .assert()
         .success()
@@ -317,7 +317,11 @@ fn assign_update_alt_operator_replaces_only_when_falsy() {
 fn assign_plus_equals_appends_to_array() {
     // += replaces the old dedicated `push` command for appending to arrays
     let out = jqc()
-        .args([".plugins += [\"logging\"]", &fixture("config.jsonc")])
+        .args([
+            "--edit",
+            ".plugins += [\"logging\"]",
+            &fixture("config.jsonc"),
+        ])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -366,19 +370,9 @@ fn assign_in_place_requires_file() {
 }
 
 #[test]
-fn assign_in_place_with_read_only_filter_errors() {
-    jqc()
-        .args([".port", "--in-place"])
-        .write_stdin(r#"{"port": 3000}"#)
-        .assert()
-        .failure()
-        .stderr(contains("--in-place requires an edit expression"));
-}
-
-#[test]
 fn assign_multi_path_bulk_update() {
     jqc()
-        .args([".tags[] += \"!\""])
+        .args(["--edit", ".tags[] += \"!\""])
         .write_stdin(r#"{"tags": ["a", "b"]}"#)
         .assert()
         .success()
@@ -389,18 +383,10 @@ fn assign_multi_path_bulk_update() {
 #[test]
 fn assign_creates_nonexistent_key() {
     jqc()
-        .args([".missing = 42", &fixture("config.jsonc")])
+        .args(["--edit", ".missing = 42", &fixture("config.jsonc")])
         .assert()
         .success()
         .stdout(contains("\"missing\": 42"));
-}
-
-#[test]
-fn assign_missing_intermediate_object_errors() {
-    jqc()
-        .args([".server.missing = 42", &fixture("config.jsonc")])
-        .assert()
-        .failure();
 }
 
 // ---------------------------------------------------------------------------
@@ -410,7 +396,7 @@ fn assign_missing_intermediate_object_errors() {
 #[test]
 fn del_removes_key_and_preserves_other_comments() {
     let out = jqc()
-        .args(["del(.debug)", &fixture("config.jsonc")])
+        .args(["--edit", "del(.debug)", &fixture("config.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -461,7 +447,7 @@ fn del_in_place_requires_file() {
 #[test]
 fn del_array_element() {
     jqc()
-        .args(["del(.tags[0])"])
+        .args(["--edit", "del(.tags[0])"])
         .write_stdin(r#"{"tags": ["a", "b"]}"#)
         .assert()
         .success()
@@ -471,18 +457,10 @@ fn del_array_element() {
 #[test]
 fn del_nonexistent_key_is_noop() {
     let out = jqc()
-        .args(["del(.missing)", &fixture("config.jsonc")])
+        .args(["--edit", "del(.missing)", &fixture("config.jsonc")])
         .output()
         .unwrap();
     assert!(out.status.success());
-}
-
-#[test]
-fn del_multiple_args_errors() {
-    jqc()
-        .args(["del(.debug, .host)", &fixture("config.jsonc")])
-        .assert()
-        .failure();
 }
 
 // ---------------------------------------------------------------------------
@@ -527,6 +505,7 @@ fn vscode_filter_tab_size() {
 fn vscode_assign_tab_size_preserves_comments() {
     let out = jqc()
         .args([
+            "--edit",
             r#"."editor.tabSize" = 4"#,
             &fixture("vscode-settings.jsonc"),
         ])
@@ -562,6 +541,7 @@ fn tsconfig_filter_nested_target() {
 fn tsconfig_assign_strict_preserves_inline_comment() {
     let out = jqc()
         .args([
+            "--edit",
             ".compilerOptions.strict = false",
             &fixture("tsconfig.jsonc"),
         ])
@@ -596,7 +576,11 @@ fn deno_filter_version() {
 #[test]
 fn deno_assign_plus_equals_lint_tag_preserves_comments() {
     let out = jqc()
-        .args([".lint.rules.tags += [\"strict\"]", &fixture("deno.jsonc")])
+        .args([
+            "--edit",
+            ".lint.rules.tags += [\"strict\"]",
+            &fixture("deno.jsonc"),
+        ])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -658,6 +642,7 @@ fn filter_monochrome_suppresses_color() {
 fn assign_creates_nonexistent_nested_key() {
     jqc()
         .args([
+            "--edit",
             ".compilerOptions.newOption = true",
             &fixture("tsconfig.jsonc"),
         ])
@@ -669,7 +654,7 @@ fn assign_creates_nonexistent_nested_key() {
 #[test]
 fn del_nonexistent_key_via_stdin_is_noop() {
     jqc()
-        .args(["del(.missing)"])
+        .args(["--edit", "del(.missing)"])
         .write_stdin(r#"{"port": 3000}"#)
         .assert()
         .success();
@@ -679,7 +664,7 @@ fn del_nonexistent_key_via_stdin_is_noop() {
 fn del_preserves_adjacent_block_comment() {
     // /* Feature flags */ sits above "debug"; deleting "debug" must keep the block comment
     let out = jqc()
-        .args(["del(.debug)", &fixture("config.jsonc")])
+        .args(["--edit", "del(.debug)", &fixture("config.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -846,7 +831,7 @@ fn fmt_preserves_inline_block_comment_between_key_and_value() {
 #[test]
 fn assign_plus_equals_preserves_comment_between_array_elements() {
     let out = jqc()
-        .args([".tags += [\"delta\"]", &fixture("tricky.jsonc")])
+        .args(["--edit", ".tags += [\"delta\"]", &fixture("tricky.jsonc")])
         .output()
         .unwrap();
     let stdout = String::from_utf8(out.stdout).unwrap();
@@ -1132,46 +1117,12 @@ fn fmt_accepts_color_option_before_subcommand() {
 // ---------------------------------------------------------------------------
 
 #[test]
-fn edit_rejects_short_in_place_and_leaves_file() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("c.jsonc");
-    fs::write(&path, "{\"a\": 1} // keep\n").unwrap();
-    jqc()
-        .args(["-i", ".a = 9", path.to_str().unwrap()])
-        .assert()
-        .code(2)
-        .stderr(contains("--in-place"));
-    assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\": 1} // keep\n");
-}
-
-#[test]
-fn edit_rejects_jq_options() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("c.jsonc");
-    fs::write(&path, "{\"a\": 1}\n").unwrap();
-    jqc()
-        .args(["--arg", "x", "1", ".a = $x", path.to_str().unwrap()])
-        .assert()
-        .code(2)
-        .stderr(contains(
-            "jq options are not supported with edit expressions",
-        ));
-    jqc()
-        .args(["-n", ".a = 1"])
-        .assert()
-        .code(2)
-        .stderr(contains(
-            "jq options are not supported with edit expressions",
-        ));
-}
-
-#[test]
 fn edit_accepts_color_option() {
     let dir = tempfile::tempdir().unwrap();
     let path = dir.path().join("c.jsonc");
     fs::write(&path, "{\"a\": 1}\n").unwrap();
     let out = jqc()
-        .args(["-C", ".a = 2", path.to_str().unwrap()])
+        .args(["--edit", "-C", ".a = 2", path.to_str().unwrap()])
         .output()
         .unwrap();
     assert!(out.status.success());
@@ -1209,33 +1160,6 @@ fn unreadable_file_does_not_stop_later_files() {
 // ---------------------------------------------------------------------------
 // Review fixes, cycle 2
 // ---------------------------------------------------------------------------
-
-#[test]
-fn edit_accepts_compact_output_option() {
-    jqc()
-        .args(["-c", ".a = 5"])
-        .write_stdin("{\"a\":1,\"b\":2}")
-        .assert()
-        .success();
-    jqc()
-        .args(["-cC", ".a = 5"])
-        .write_stdin("{\"a\":1,\"b\":2}")
-        .assert()
-        .success();
-}
-
-#[test]
-fn edit_rejects_cluster_containing_i_with_hint() {
-    let dir = tempfile::tempdir().unwrap();
-    let path = dir.path().join("c.jsonc");
-    fs::write(&path, "{\"a\": 0} // keep\n").unwrap();
-    jqc()
-        .args(["-ci", ".a = 1", path.to_str().unwrap()])
-        .assert()
-        .code(2)
-        .stderr(contains("--in-place"));
-    assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\": 0} // keep\n");
-}
 
 #[test]
 fn unreadable_file_is_reported_when_jq_stops_early() {
@@ -1359,7 +1283,7 @@ fn exit_status_option_without_output_keeps_broken_input_failure() {
 #[test]
 fn edit_accepts_double_dash() {
     jqc()
-        .args(["--", ".a = 2"])
+        .args(["--edit", "--", ".a = 2"])
         .write_stdin("{}")
         .assert()
         .success()
@@ -1446,4 +1370,253 @@ fn caught_input_error_with_exit_status_is_not_reported() {
         .assert()
         .code(1)
         .stderr("");
+}
+
+// ---------------------------------------------------------------------------
+// Edit mode (--edit / --in-place), computed by jq
+// ---------------------------------------------------------------------------
+
+#[test]
+fn in_place_requires_a_file() {
+    jqc()
+        .args([".port", "--in-place"])
+        .write_stdin(r#"{"port": 3000}"#)
+        .assert()
+        .code(2)
+        .stderr(contains("--in-place requires a file"));
+}
+
+#[test]
+fn assign_creates_missing_intermediate_object() {
+    // jq creates the parent (#45).
+    jqc()
+        .args(["--edit", ".server.missing = 42", &fixture("config.jsonc")])
+        .assert()
+        .success()
+        .stdout(contains("\"missing\": 42"));
+}
+
+#[test]
+fn del_multiple_paths() {
+    // #49
+    let out = jqc()
+        .args(["--edit", "del(.debug, .host)", &fixture("config.jsonc")])
+        .output()
+        .unwrap();
+    assert!(out.status.success());
+    let stdout = String::from_utf8(out.stdout).unwrap();
+    assert!(!stdout.contains("\"debug\""), "{stdout}");
+    assert!(!stdout.contains("\"host\""), "{stdout}");
+}
+
+#[test]
+fn short_i_is_a_jq_option_and_leaves_the_file() {
+    // jqc's own options are long-only, so `-i` goes to jq, which rejects it.
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("x.jsonc");
+    fs::write(&path, "{\"a\": 1}").unwrap();
+    jqc()
+        .args(["-i", ".a = 9", path.to_str().unwrap()])
+        .assert()
+        .code(2);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\": 1}");
+}
+
+#[test]
+fn edit_rejects_options_that_change_input_or_output() {
+    // #68: output-format options are errors in edit mode.
+    for option in ["-c", "-r", "-n", "-s", "-S", "--tab", "--seq", "-nc"] {
+        jqc()
+            .args(["--edit", option, ".a = 1"])
+            .write_stdin("{\"a\": 0}")
+            .assert()
+            .code(2)
+            .stderr(contains("cannot be used with --edit"));
+    }
+    jqc()
+        .args(["--edit", "--indent", "4", ".a = 1"])
+        .write_stdin("{\"a\": 0}")
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn edit_passes_jq_arguments() {
+    jqc()
+        .args(["--edit", "--arg", "x", "hi", ".a = $x"])
+        .write_stdin("{\"a\": 0} // keep")
+        .assert()
+        .success()
+        .stdout("{\"a\": \"hi\"} // keep\n");
+}
+
+#[test]
+fn edit_with_multiple_results_is_an_error() {
+    // #66
+    jqc()
+        .args(["--edit", ".a = (1, 2)"])
+        .write_stdin("{\"a\": 0}")
+        .assert()
+        .code(5)
+        .stderr(contains("2 results"));
+}
+
+#[test]
+fn edit_rejects_multiple_input_values() {
+    jqc()
+        .args(["--edit", ".a = 1"])
+        .write_stdin("{\"a\": 0} {\"a\": 1}")
+        .assert()
+        .code(5);
+}
+
+#[test]
+fn edit_takes_one_input_file() {
+    jqc()
+        .args([
+            "--edit",
+            ".a = 1",
+            &fixture("config.jsonc"),
+            &fixture("config.jsonc"),
+        ])
+        .assert()
+        .code(2);
+}
+
+#[test]
+fn edit_extends_arrays_and_handles_negative_indexes_and_slices() {
+    // #46, #47, #48
+    jqc()
+        .args(["--edit", ".a[3] = 9 | .b[-1] = 0 | .c[1:] = []"])
+        .write_stdin("{\"a\": [1], \"b\": [1, 2], \"c\": [1, 2, 3]}")
+        .assert()
+        .success()
+        .stdout(contains("null"))
+        .stdout(contains("9"))
+        .stdout(contains("\"c\": [1]"));
+}
+
+#[test]
+fn jq_failure_leaves_the_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let path = dir.path().join("x.jsonc");
+    fs::write(&path, "{\"a\": 1} // keep").unwrap();
+    jqc()
+        .args(["--in-place", ".a.b = 1", path.to_str().unwrap()])
+        .assert()
+        .code(5);
+    assert_eq!(fs::read_to_string(&path).unwrap(), "{\"a\": 1} // keep");
+}
+
+#[test]
+fn in_place_edits_each_file() {
+    let dir = tempfile::tempdir().unwrap();
+    let a = dir.path().join("a.jsonc");
+    let b = dir.path().join("b.jsonc");
+    fs::write(&a, "{\"v\": 1} // a").unwrap();
+    fs::write(&b, "{\"v\": 2} // b").unwrap();
+    jqc()
+        .args([
+            "--in-place",
+            ".v += 10",
+            a.to_str().unwrap(),
+            b.to_str().unwrap(),
+        ])
+        .assert()
+        .success();
+    assert_eq!(fs::read_to_string(&a).unwrap(), "{\"v\": 11} // a");
+    assert_eq!(fs::read_to_string(&b).unwrap(), "{\"v\": 12} // b");
+}
+
+#[test]
+fn edit_mode_without_edit_option_is_filter_mode() {
+    // Without --edit, an assignment is an ordinary jq filter: comments are gone.
+    jqc()
+        .args(["-c", ".a = 1"])
+        .write_stdin("{\"a\": 0} // gone")
+        .assert()
+        .success()
+        .stdout("{\"a\":1}\n");
+}
+
+#[test]
+fn edit_keeps_untouched_number_spelling() {
+    jqc()
+        .args(["--edit", ".z = 1"])
+        .write_stdin("{\"a\": 1e2, \"b\": 12e-1} // keep")
+        .assert()
+        .success()
+        .stdout(contains("\"a\": 1e2"))
+        .stdout(contains("\"b\": 12e-1"))
+        .stdout(contains("// keep"));
+}
+
+#[test]
+fn edit_keeps_double_dash_as_an_option_value() {
+    jqc()
+        .args(["--edit", "--arg", "x", "--", ".a = $x"])
+        .write_stdin("{\"a\": 0}")
+        .assert()
+        .success()
+        .stdout("{\"a\": \"--\"}\n");
+}
+
+#[test]
+fn edit_accepts_library_path_with_attached_directory() {
+    jqc()
+        .args(["--edit", "-L/tmp/rsjca", ".a = 1"])
+        .write_stdin("{\"a\":0}")
+        .assert()
+        .success();
+}
+
+#[test]
+fn edit_dash_reads_stdin() {
+    jqc()
+        .args(["--edit", ".v = 5", "-"])
+        .write_stdin("{\"v\": 1} // c")
+        .assert()
+        .success()
+        .stdout(contains("\"v\": 5"))
+        .stdout(contains("// c"));
+}
+
+#[test]
+fn in_place_dash_is_an_error() {
+    jqc()
+        .args(["--in-place", ".v = 1", "-"])
+        .write_stdin("{\"v\": 0}")
+        .assert()
+        .code(2)
+        .stderr(contains("--in-place requires a file"));
+}
+
+#[test]
+fn edit_rejects_options_that_print_other_things() {
+    for option in [
+        "-V",
+        "-h",
+        "--debug-trace",
+        "--debug-trace=all",
+        "--debug-dump-disasm",
+        "--build-configuration",
+        "--run-tests",
+    ] {
+        jqc()
+            .args(["--edit", option, ".a=1"])
+            .write_stdin("{\"a\": 0}")
+            .assert()
+            .code(2)
+            .stderr(contains("cannot be used with --edit"));
+    }
+}
+
+#[test]
+fn edit_with_a_trailing_option_missing_its_value_fails() {
+    jqc()
+        .args(["--edit", ".a = $x", "--arg", "x"])
+        .write_stdin("{\"a\": 0}")
+        .assert()
+        .code(2)
+        .stdout("");
 }

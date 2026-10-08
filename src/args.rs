@@ -34,6 +34,11 @@ pub struct Run {
     /// `-C` is `Some(true)` and `-M` `Some(false)`; the last one wins.
     pub color: Option<bool>,
     pub in_place: bool,
+    /// `--edit`; `--in-place` implies it.
+    pub edit: bool,
+    /// The jq options among `jq_args`, without their values, the filter
+    /// or `--`. Edit mode checks them.
+    pub options: Vec<String>,
 }
 
 pub const COLOR_OPTIONS: [&str; 4] = ["-C", "-M", "--color-output", "--monochrome-output"];
@@ -78,10 +83,17 @@ pub fn parse(args: Vec<String>) -> Result<Command> {
             }
             continue;
         }
+        if !matches!(
+            arg.as_str(),
+            "--help" | "--version" | "--in-place" | "--edit" | "--"
+        ) {
+            run.options.push(arg.clone());
+        }
         match arg.as_str() {
             "--help" => return Ok(Command::Help),
             "--version" => return Ok(Command::Version),
             "--in-place" => run.in_place = true,
+            "--edit" => run.edit = true,
             "--" => {
                 options_ended = true;
                 run.jq_args.push(arg);
@@ -135,6 +147,10 @@ pub fn parse(args: Vec<String>) -> Result<Command> {
                             // `-L dir`, or `-Ldir` with the directory attached.
                             if i + 1 == cluster.len() {
                                 run.jq_args.extend(args.next());
+                            }
+                            // The attached directory is not an option.
+                            if let Some(option) = run.options.last_mut() {
+                                option.truncate(i + 1);
                             }
                             break;
                         }
@@ -350,6 +366,24 @@ mod tests {
         // jq's own short forms stay jq's.
         assert_eq!(run(&["-h"]).jq_args, strings(&["-h"]));
         assert_eq!(run(&["-V"]).jq_args, strings(&["-V"]));
+    }
+
+    #[test]
+    fn test_edit_and_options() {
+        let r = run(&["--edit", "--arg", "x", "-c", "-nr", ".a = $x", "f.jsonc"]);
+        assert!(r.edit);
+        assert_eq!(r.options, strings(&["--arg", "-nr"]));
+        assert_eq!(r.jq_args, strings(&["--arg", "x", "-c", "-nr", ".a = $x"]));
+        assert!(run(&["--in-place", "."]).in_place);
+    }
+
+    #[test]
+    fn test_attached_library_path() {
+        assert_eq!(
+            run(&["--edit", "-L/usr/share/jq", "."]).options,
+            strings(&["-L"])
+        );
+        assert_eq!(run(&["--edit", "-nLdir", "."]).options, strings(&["-nL"]));
     }
 
     #[test]
