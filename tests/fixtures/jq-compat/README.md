@@ -1,6 +1,12 @@
 # jq compatibility cases
 
-`cases.json` records, for each case, what jq and jqc print for the given arguments and input. `scripts/jq-compat.sh` runs every case through both tools and checks each output against the case's expectation. The `jq-compat` workflow runs it on pull requests with a freshly built jqc and the jq version pinned as `JQ_VERSION` in `.github/workflows/jq-compat.yml`.
+jqc runs filters with the installed jq, so it prints what jq prints. `cases.json` records where it doesn't: each case runs the same arguments and input through jq and jqc, and a case with a `jqc` expectation and a `note` is a known difference from jq. A few cases without a `jqc` expectation check that jqc passes input to jq unchanged, such as how numbers are written and how duplicate keys are read.
+
+`scripts/jq-compat.sh` runs every case through both tools and checks each output against the case's expectation. The `jq-compat` workflow runs it on pull requests with a freshly built jqc and the jq version pinned as `JQ_VERSION` in `.github/workflows/jq-compat.yml`.
+
+jqc's own behavior (JSONC conversion, argument handling, exit statuses, `--edit`, `fmt`) is tested by the E2E tests in `tests/cli.rs`.
+
+One known difference can't be expressed here, because the script only compares stdout and the exit status: with `-n`, jqc reads stdin even when the filter doesn't use it, so a later command in the same pipeline gets nothing.
 
 ## Case format
 
@@ -25,9 +31,9 @@
 | `status` | no | jq's exit status. `0` when omitted |
 | `jqc` | no | What jqc prints, when it differs from `expect`. When omitted, jqc must print `expect` |
 | `jqc_status` | no | jqc's exit status, when it differs from `status` |
-| `note` | no | Why jqc differs. For a bug, start with `Bug #<issue>:`; for an intended difference, say why (for example, edit mode keeping the source formatting) |
+| `note` | no | Why jqc differs. For a bug, start with `Bug #<issue>:`; for an intended difference, say why (for example, jq seeing no file name because jqc passes the inputs on stdin) |
 
-A case with `jqc` or `jqc_status` needs a `note`, so every difference from jq is explained. stderr is never compared. Edit expressions usually pass `-c`, so both tools print one line.
+A case with `jqc` or `jqc_status` needs a `note`, so every difference from jq is explained. stderr is never compared.
 
 ## Add a case
 
