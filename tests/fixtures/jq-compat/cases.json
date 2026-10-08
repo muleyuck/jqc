@@ -228,9 +228,7 @@
       "name": "seq-input",
       "args": ["--seq","-c","."],
       "stdin": "\u001e1\n",
-      "expect": ["\u001e1"],
-      "jqc": [],
-      "note": "jqc passes jq the converted values without record separators, and jq --seq ignores input that doesn't start with one, so jqc prints nothing and still exits 0."
+      "expect": ["\u001e1"]
     },
     {
       "name": "stream-duplicate-keys",

@@ -291,8 +291,9 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
     let failures = Arc::new(Mutex::new(Failures::default()));
     let feeder_failures = Arc::clone(&failures);
     let files = run.files;
+    let seq = run.options.iter().any(|o| o == "--seq");
     thread::spawn(move || {
-        feed(&mut stdin, &files, &feeder_failures);
+        feed(&mut stdin, &files, seq, &feeder_failures);
         // Closing stdin after recording the failures lets jq finish first.
         drop(stdin);
     });
@@ -342,7 +343,7 @@ struct Failures {
 
 /// Writes the inputs to jq as JSON, one file after another. Stops quietly
 /// when jq stops reading.
-fn feed(jq: &mut impl Write, files: &[String], failures: &Mutex<Failures>) {
+fn feed(jq: &mut impl Write, files: &[String], seq: bool, failures: &Mutex<Failures>) {
     let inputs: Vec<Option<&str>> = if files.is_empty() {
         vec![None]
     } else {
@@ -360,6 +361,12 @@ fn feed(jq: &mut impl Write, files: &[String], failures: &Mutex<Failures>) {
                 continue;
             }
         };
+        if seq {
+            if jq.write_all(seq_records(&text).as_bytes()).is_err() {
+                return;
+            }
+            continue;
+        }
         let prefix = jsonc::convert_prefix(&text, file.unwrap_or("<stdin>"));
         let mut json: String = prefix.values.iter().map(|v| format!("{v}\n")).collect();
         if let Some(e) = prefix.error {
@@ -377,6 +384,31 @@ fn feed(jq: &mut impl Write, files: &[String], failures: &Mutex<Failures>) {
             return;
         }
     }
+}
+
+/// jq --seq reads values that each start with a record separator (RS) and
+/// skips, with a warning, what it can't read. Each RS-separated part is
+/// converted as JSONC; a part that doesn't convert, and any text before the
+/// first RS, goes to jq as written, so jq skips what it would skip.
+fn seq_records(text: &str) -> String {
+    let mut parts = text.split('\x1e');
+    let mut out = parts.next().unwrap_or("").to_string();
+    for part in parts {
+        out.push('\x1e');
+        match jsonc::convert(part, "<seq>") {
+            Ok(values) => {
+                out.push_str(&values.join("\n"));
+                // jq reads a top-level number as cut off when the record's
+                // text ends right after it, so end the record with a newline
+                // whenever anything (whitespace or a comment) followed it.
+                if part.len() > part.trim_end().len() || jsonc::ends_with_comment(part) {
+                    out.push('\n');
+                }
+            }
+            Err(_) => out.push_str(part),
+        }
+    }
+    out
 }
 
 fn exit_code(status: ExitStatus) -> ExitCode {

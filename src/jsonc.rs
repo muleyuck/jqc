@@ -205,9 +205,28 @@ fn write_string(out: &mut String, s: &str) {
     out.push('"');
 }
 
+/// Whether the last token of `text` is a comment.
+pub fn ends_with_comment(text: &str) -> bool {
+    let mut scanner = Scanner::new(text, &ScannerOptions::default());
+    let mut last_is_comment = false;
+    while let Ok(Some(token)) = scanner.scan() {
+        last_is_comment = matches!(token, Token::CommentLine(_) | Token::CommentBlock(_));
+    }
+    last_is_comment
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_ends_with_comment() {
+        assert!(ends_with_comment("1 // c"));
+        assert!(ends_with_comment("1 /* c */"));
+        assert!(!ends_with_comment("1"));
+        assert!(!ends_with_comment("\"a//b\""));
+        assert!(!ends_with_comment("1 // c\n2"));
+    }
 
     fn one(text: &str) -> String {
         let values = convert(text, "test").unwrap();

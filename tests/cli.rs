@@ -3,6 +3,7 @@
 //
 
 use assert_cmd::Command;
+use predicates::prelude::PredicateBooleanExt;
 use predicates::str::contains;
 use std::fs;
 
@@ -1651,4 +1652,47 @@ fn closed_stdout_ends_quietly() {
         assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
         assert_eq!(out.status.code(), Some(141), "{args:?}: {stderr}");
     }
+}
+
+#[test]
+fn seq_reads_jsonc_records() {
+    jqc()
+        .args(["--seq", "-c", "."])
+        .write_stdin("\x1e{\n  // c\n  \"a\": 1,\n}\n\x1e2 3\n")
+        .assert()
+        .success()
+        .stdout("\x1e{\"a\":1}\n\x1e2\n\x1e3\n");
+}
+
+#[test]
+fn seq_skips_what_jq_skips() {
+    // jq skips text before the first RS and a record it can't read, and goes on.
+    jqc()
+        .args(["--seq", "-c", "."])
+        .write_stdin("0\n\x1e{\"a\":}\n\x1e3\n")
+        .assert()
+        .success()
+        .stdout("\x1e3\n")
+        .stderr(contains("ignoring parse error"))
+        .stderr(contains("Error:").not());
+}
+
+#[test]
+fn seq_value_followed_by_a_comment_at_eof_is_complete() {
+    jqc()
+        .args(["--seq", "-c", "."])
+        .write_stdin("\x1e1 // c")
+        .assert()
+        .success()
+        .stdout("\x1e1\n");
+}
+
+#[test]
+fn seq_value_followed_by_a_comment_and_nbsp_at_eof_is_complete() {
+    jqc()
+        .args(["--seq", "-c", "."])
+        .write_stdin("\x1e1 /* c */\u{a0}")
+        .assert()
+        .success()
+        .stdout("\x1e1\n");
 }
