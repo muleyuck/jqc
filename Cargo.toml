@@ -13,9 +13,6 @@ path = "src/main.rs"
 
 [dependencies]
 jsonc-parser = { version = "0.34.0", features = ["cst", "serde_json", "serde", "preserve_order"] }
-jaq-core = "3.0.0"
-jaq-json = { version = "2.0.0", features = ["serde"] }
-jaq-std = "3.0.0"
 serde_json = { version = "1.0.150", features = ["preserve_order"] }
 anyhow = "1.0.102"
 tempfile = "3.27.0"

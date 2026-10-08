@@ -963,7 +963,7 @@ fn fmt_preserves_non_ascii_in_values_and_comments() {
 }
 
 // ---------------------------------------------------------------------------
-// jaq-std filter integration
+// jq builtins through jqc
 // ---------------------------------------------------------------------------
 
 #[test]

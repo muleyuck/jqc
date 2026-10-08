@@ -1,8 +1,5 @@
 mod args;
 mod color;
-mod edit;
-mod edit_detect;
-mod jaq;
 mod jq;
 mod jsonc;
 mod patch;
