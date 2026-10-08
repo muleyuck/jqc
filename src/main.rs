@@ -133,9 +133,9 @@ fn run_fmt(file: Option<&str>, in_place: bool, color: Option<bool>) -> Result<Ex
     if in_place {
         write_output(&text, file).map_err(fail(2))?;
     } else if resolve_color(color) {
-        print_colored(&text);
+        print_colored(&text)?;
     } else {
-        println!("{text}");
+        print_out(&text)?;
     }
     Ok(ExitCode::SUCCESS)
 }
@@ -228,9 +228,9 @@ fn run_edit(mut run: Run) -> Result<ExitCode, Failure> {
         if run.in_place {
             write_output(&edited, file).map_err(fail(2))?;
         } else if resolve_color(run.color) {
-            print_colored(&edited);
+            print_colored(&edited)?;
         } else {
-            println!("{edited}");
+            print_out(&edited)?;
         }
     }
     Ok(ExitCode::SUCCESS)
@@ -390,9 +390,24 @@ fn exit_code(status: ExitStatus) -> ExitCode {
     ExitCode::from(status.code().unwrap_or(1) as u8)
 }
 
-fn print_colored(text: &str) {
+/// Print `text` and a newline. When the reader has closed the pipe
+/// (`| head`), end quietly with 141, as a process killed by SIGPIPE does
+/// (and as jq does in filter mode).
+fn print_out(text: &str) -> Result<(), Failure> {
+    let mut out = io::stdout().lock();
+    match writeln!(out, "{text}").and_then(|()| out.flush()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Err(Failure {
+            status: 141,
+            error: None,
+        }),
+        Err(e) => Err(fail(2)(anyhow!("Failed to write to stdout: {e}"))),
+    }
+}
+
+fn print_colored(text: &str) -> Result<(), Failure> {
     let palette = color::Palette::from_env();
-    println!("{}", color::colorize_jsonc(text, &palette));
+    print_out(&color::colorize_jsonc(text, &palette))
 }
 
 /// `color` is `-C` (`Some(true)`) or `-M` (`Some(false)`).

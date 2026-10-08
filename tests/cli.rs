@@ -1620,3 +1620,35 @@ fn edit_with_a_trailing_option_missing_its_value_fails() {
         .code(2)
         .stdout("");
 }
+
+#[cfg(unix)]
+#[test]
+fn closed_stdout_ends_quietly() {
+    use std::io::{BufRead, BufReader};
+    use std::process::{Command as StdCommand, Stdio};
+
+    let dir = tempfile::tempdir().unwrap();
+    let big = dir.path().join("big.jsonc");
+    let body: Vec<String> = (0..200_000)
+        .map(|i| format!("  \"k{i}\": {i}, // c"))
+        .collect();
+    fs::write(&big, format!("{{\n{}\n}}", body.join("\n"))).unwrap();
+    for args in [vec!["fmt"], vec!["--edit", ".k0 = 1"]] {
+        let mut child = StdCommand::new(env!("CARGO_BIN_EXE_jqc"))
+            .args(&args)
+            .arg(&big)
+            .stdout(Stdio::piped())
+            .stderr(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut line = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut line)
+            .unwrap();
+        // The reader is dropped here, closing the pipe.
+        let out = child.wait_with_output().unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!stderr.contains("panicked"), "{args:?}: {stderr}");
+        assert_eq!(out.status.code(), Some(141), "{args:?}: {stderr}");
+    }
+}
