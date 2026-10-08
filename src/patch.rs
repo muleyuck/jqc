@@ -106,13 +106,41 @@ fn write_array(node: &CstNode, arr: &CstArray, old: &JsonArray, new: &JsonArray)
         }
         return Ok(());
     }
-    if new.len() > old.len() && old.iter().zip(new.iter()).all(|(o, n)| o == n) {
+    if new.len() > old.len() && old.iter().zip(new.iter()).all(|(o, n)| same(o, n)) {
+        // Only NaN (printed as null by jq) can differ in the kept elements.
+        for ((element, old_value), new_value) in
+            arr.elements().iter().zip(old.iter()).zip(new.iter())
+        {
+            write_node(element, old_value, new_value)?;
+        }
         for new_value in new.iter().skip(old.len()) {
             arr.append(to_cst_input(new_value));
         }
         return Ok(());
     }
     replace(node.clone(), to_cst_input(&JsonValue::Array(new.clone())))
+}
+
+/// What the original value has in place of NaN, which jq prints as null.
+/// Must match the string in `main.rs`'s `CANONICALIZE`.
+pub const NAN_MARK: &str = "\u{0}jqc:NaN";
+
+/// Equal, or equal once jq has printed each NaN as null.
+fn same(old: &JsonValue, new: &JsonValue) -> bool {
+    match (old, new) {
+        (JsonValue::String(s), JsonValue::Null) => s.as_ref() == NAN_MARK,
+        (JsonValue::Array(o), JsonValue::Array(n)) => {
+            o.len() == n.len() && o.iter().zip(n.iter()).all(|(o, n)| same(o, n))
+        }
+        (JsonValue::Object(o), JsonValue::Object(n)) => {
+            o.len() == n.len()
+                && o.clone()
+                    .take_inner()
+                    .iter()
+                    .all(|(k, v)| n.get(k).is_some_and(|n| same(v, n)))
+        }
+        _ => old == new,
+    }
 }
 
 /// Numbers keep the text jq printed; strings are written the CST's way.
@@ -272,6 +300,23 @@ mod tests {
         let out = patch("[1, // one\n 2]", "[1,2]", "[1,3]");
         assert!(out.contains("// one"), "{out}");
         assert!(out.contains('3'), "{out}");
+    }
+
+    #[test]
+    fn test_appending_after_nan_keeps_comments() {
+        let mark = serde_json::to_string(NAN_MARK).unwrap();
+        let source = format!("[{mark},{{\"a\":{mark}}},2]");
+        let out = patch(
+            "[ /*c1*/ NaN, {\"a\": NaN}, // c2\n 2 /*c3*/ ]",
+            &source,
+            "[null,{\"a\":null},2,1]",
+        );
+        assert!(
+            out.contains("/*c1*/ null") && out.contains("{\"a\": null}"),
+            "{out}"
+        );
+        assert!(out.contains("// c2") && out.contains("/*c3*/"), "{out}");
+        assert!(out.contains('1'), "{out}");
     }
 
     #[test]

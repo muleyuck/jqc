@@ -1696,3 +1696,33 @@ fn seq_value_followed_by_a_comment_and_nbsp_at_eof_is_complete() {
         .success()
         .stdout("\x1e1\n");
 }
+
+#[test]
+fn edit_overwrites_nan_with_null() {
+    jqc()
+        .args(["--edit", ".a = null"])
+        .write_stdin("{\"a\":NaN}")
+        .assert()
+        .success()
+        .stdout("{\"a\":null}\n");
+}
+
+#[test]
+fn edit_turns_other_nan_into_null_like_jq() {
+    jqc()
+        .args(["--edit", ".b = 1"])
+        .write_stdin("{\"a\": NaN, \"b\": 0}")
+        .assert()
+        .success()
+        .stdout("{\"a\": null, \"b\": 1}\n");
+}
+
+#[test]
+fn seq_keeps_values_before_a_broken_one() {
+    jqc()
+        .args(["--seq", "-c", "."])
+        .write_stdin("\x1e{\"a\":1/*c*/} {\"bad\":}\x1e2\n")
+        .assert()
+        .success()
+        .stdout("\x1e{\"a\":1}\n\x1e2\n");
+}

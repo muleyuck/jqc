@@ -23,18 +23,27 @@ pub fn convert(text: &str, name: &str) -> Result<Vec<String>> {
 pub struct Prefix {
     pub values: Vec<String>,
     pub error: Option<anyhow::Error>,
+    /// Byte offset in the text where the unconverted remainder starts: the
+    /// end of the last converted value, or 0 when none converted.
+    pub rest: usize,
 }
 
 pub fn convert_prefix(text: &str, name: &str) -> Prefix {
     let (ranges, scan_error) = split_values(text);
     let mut values = Vec::new();
+    let mut rest = 0;
     for range in ranges {
+        let end = range.end;
         match convert_value(text, range, name) {
-            Ok(json) => values.push(json),
+            Ok(json) => {
+                values.push(json);
+                rest = end;
+            }
             Err(e) => {
                 return Prefix {
                     values,
                     error: Some(e),
+                    rest,
                 };
             }
         }
@@ -42,6 +51,7 @@ pub fn convert_prefix(text: &str, name: &str) -> Prefix {
     Prefix {
         values,
         error: scan_error.map(|e| parse_error(name, text, 0, &e)),
+        rest,
     }
 }
 
@@ -218,6 +228,13 @@ pub fn ends_with_comment(text: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_convert_prefix_rest() {
+        assert_eq!(convert_prefix("1 2 {\"x\": } 3", "t").rest, 3);
+        assert_eq!(convert_prefix("{\"x\": }", "t").rest, 0);
+        assert_eq!(convert_prefix("2 1@", "t").rest, 1);
+    }
 
     #[test]
     fn test_ends_with_comment() {

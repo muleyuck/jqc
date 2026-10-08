@@ -247,9 +247,12 @@ fn edit_document(jq_args: &[String], text: &str, name: &str) -> Result<String, F
         )));
     };
     // jq canonicalizes number spellings (`1e2` becomes `1E+2`), so the
-    // original value is compared in the spelling jq gives it back.
+    // original value is compared in the spelling jq gives it back. jq prints
+    // NaN as null, which would make an edit to null look like no change, so
+    // NaN is mapped to a string no result can equal (`patch::NAN_MARK`).
+    const CANONICALIZE: &str = r#"def w: if type == "object" then map_values(w) elif type == "array" then map(w) elif type == "number" and isnan then "\u0000jqc:NaN" else . end; w"#;
     let (status, canonical) =
-        jq::output(&["-c".to_string(), ".".to_string()], converted).map_err(fail(2))?;
+        jq::output(&["-c".to_string(), CANONICALIZE.to_string()], converted).map_err(fail(2))?;
     if !status.success() {
         return Err(jq_failed(status));
     }
@@ -395,17 +398,19 @@ fn seq_records(text: &str) -> String {
     let mut out = parts.next().unwrap_or("").to_string();
     for part in parts {
         out.push('\x1e');
-        match jsonc::convert(part, "<seq>") {
-            Ok(values) => {
-                out.push_str(&values.join("\n"));
-                // jq reads a top-level number as cut off when the record's
-                // text ends right after it, so end the record with a newline
-                // whenever anything (whitespace or a comment) followed it.
-                if part.len() > part.trim_end().len() || jsonc::ends_with_comment(part) {
-                    out.push('\n');
-                }
+        let prefix = jsonc::convert_prefix(part, "<seq>");
+        out.push_str(&prefix.values.join("\n"));
+        if prefix.error.is_some() {
+            // jq skips the broken remainder, as written, with a warning.
+            if !prefix.values.is_empty() {
+                out.push('\n');
             }
-            Err(_) => out.push_str(part),
+            out.push_str(&part[prefix.rest..]);
+        } else if part.len() > part.trim_end().len() || jsonc::ends_with_comment(part) {
+            // jq reads a value as cut off only when the record's text
+            // ends exactly at the value, so end it with a newline
+            // whenever anything (whitespace or a comment) followed it.
+            out.push('\n');
         }
     }
     out
