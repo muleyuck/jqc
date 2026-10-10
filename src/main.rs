@@ -132,6 +132,8 @@ fn run_fmt(file: Option<&str>, in_place: bool, color: Option<bool>) -> Result<Ex
     if invalid {
         eprintln!("Failed to set $JQ_COLORS");
     }
+    // Like jq, `-` names stdin.
+    let file = file.filter(|f| *f != "-");
     if in_place && file.is_none() {
         return Err(fail(2)(anyhow!("--in-place requires a file argument")));
     }

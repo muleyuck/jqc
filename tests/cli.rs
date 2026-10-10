@@ -1855,3 +1855,38 @@ fn jq_colors_non_utf8_bytes_like_jq() {
         .success()
         .stderr("Failed to set $JQ_COLORS\n");
 }
+
+#[test]
+fn fmt_dash_reads_stdin() {
+    for args in [&["fmt", "-"][..], &["fmt", "--", "-"][..]] {
+        jqc()
+            .args(args)
+            .write_stdin("{\"a\": 1} // c")
+            .assert()
+            .success()
+            .stdout("{\"a\": 1} // c\n");
+    }
+}
+
+#[test]
+fn fmt_in_place_dash_is_an_error() {
+    jqc()
+        .args(["fmt", "--in-place", "-"])
+        .write_stdin("{}")
+        .assert()
+        .code(2)
+        .stderr(contains("--in-place requires a file argument"));
+}
+
+#[test]
+fn fmt_reads_a_file_named_dash_as_dot_slash_dash() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("-"), "[1] // c").unwrap();
+    jqc()
+        .current_dir(dir.path())
+        .args(["fmt", "./-"])
+        .write_stdin("")
+        .assert()
+        .success()
+        .stdout("[1] // c\n");
+}
