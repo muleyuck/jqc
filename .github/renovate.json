@@ -36,8 +36,6 @@
 
     { "matchManagers": ["cargo"], "matchUpdateTypes": ["major"], "enabled": false },
 
-    { "matchManagers": ["cargo"], "matchPackageNames": ["jaq-core", "jaq-json", "jaq-std"], "groupName": "jaq" },
-
     { "matchManagers": ["cargo"], "matchDepTypes": ["dev-dependencies"], "semanticCommitScope": "deps-dev" },
     { "matchManagers": ["cargo"], "matchDepTypes": ["dev-dependencies"], "matchUpdateTypes": ["patch", "minor"], "automerge": true },
 

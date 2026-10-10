@@ -1,10 +1,8 @@
 mod args;
 mod color;
-mod edit;
-mod edit_detect;
-mod jaq;
 mod jq;
 mod jsonc;
+mod patch;
 
 use std::io::{self, Read, Write};
 use std::process::{ExitCode, ExitStatus, Stdio};
@@ -20,14 +18,17 @@ const HELP: &str = "\
 jqc - jq for JSONC
 
 Usage: jqc [jq options] [filter] [files...]
+       jqc --edit [jq options] <filter> [file]
+       jqc --in-place [jq options] <filter> <files...>
        jqc fmt [--in-place] [file]
 
 jqc converts JSONC (JSON with comments) to JSON and runs jq on it, so jq's
-options work as they do in jq. Edit expressions such as '.a = 1' and
-'del(.a)' print the edited JSONC with its comments instead.
+options work as they do in jq.
 
 jqc's own options:
-  --in-place   Write an edit expression's result back to the file
+  --edit       Run the filter as an edit and print the input with the
+               result written back, keeping comments and formatting
+  --in-place   Like --edit, but write the result back to each file
   --help       Show this help (jq's own help: jqc -h)
   --version    Show the versions of jqc and jq
 
@@ -38,14 +39,36 @@ jqc needs jq on PATH: https://jqlang.org/download/
 ";
 
 /// An error that ends jqc with `status`, as jq uses them: 2 for a usage
-/// problem or system error, 5 for input jqc can't read.
+/// problem or system error, 5 for input jqc can't read. `error` is `None`
+/// when jq already reported the error itself.
 struct Failure {
     status: u8,
-    error: anyhow::Error,
+    error: Option<anyhow::Error>,
 }
 
 fn fail(status: u8) -> impl FnOnce(anyhow::Error) -> Failure {
-    move |error| Failure { status, error }
+    move |error| Failure {
+        status,
+        error: Some(error),
+    }
+}
+
+/// jq failed and printed its own message; jqc exits with jq's status.
+fn jq_failed(status: ExitStatus) -> Failure {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::ExitStatusExt;
+        if let Some(signal) = status.signal() {
+            return Failure {
+                status: (128 + signal) as u8,
+                error: None,
+            };
+        }
+    }
+    Failure {
+        status: status.code().unwrap_or(1) as u8,
+        error: None,
+    }
 }
 
 fn main() -> ExitCode {
@@ -63,7 +86,9 @@ fn main() -> ExitCode {
     match run(args) {
         Ok(code) => code,
         Err(Failure { status, error }) => {
-            eprintln!("Error: {error:?}");
+            if let Some(error) = error {
+                eprintln!("Error: {error:?}");
+            }
             ExitCode::from(status)
         }
     }
@@ -89,16 +114,10 @@ fn run(args: Vec<String>) -> Result<ExitCode, Failure> {
             color,
         } => run_fmt(file.as_deref(), in_place, color),
         Command::Run(run) => {
-            let form = match &run.filter {
-                Some(filter) => edit_detect::detect(filter).map_err(fail(5))?,
-                None => None,
-            };
-            match form {
-                Some(form) => run_edit_form(form, &run),
-                None if run.in_place => Err(fail(2)(anyhow!(
-                    "--in-place requires an edit expression (e.g. '.a = 1' or 'del(.a)'), not a read-only filter"
-                ))),
-                None => run_filter(run),
+            if run.edit || run.in_place {
+                run_edit(run)
+            } else {
+                run_filter(run)
             }
         }
     }
@@ -114,81 +133,16 @@ fn run_fmt(file: Option<&str>, in_place: bool, color: Option<bool>) -> Result<Ex
     if in_place {
         write_output(&text, file).map_err(fail(2))?;
     } else if resolve_color(color) {
-        print_colored(&text);
+        print_colored(&text)?;
     } else {
-        println!("{text}");
+        print_out(&text)?;
     }
     Ok(ExitCode::SUCCESS)
 }
 
-fn run_edit_form(form: edit_detect::EditForm<'_>, run: &Run) -> Result<ExitCode, Failure> {
-    let file = match run.files.as_slice() {
-        [] => None,
-        [file] => Some(file.as_str()),
-        _ => return Err(fail(2)(anyhow!("an edit expression takes one input file"))),
-    };
-    reject_jq_options(run).map_err(fail(2))?;
-    if run.in_place && file.is_none() {
-        return Err(fail(2)(anyhow!("--in-place requires a file argument")));
-    }
-    let text = read_input(file).map_err(fail(2))?;
-    let filter = run
-        .filter
-        .as_deref()
-        .expect("edit forms are detected from the filter");
-    let result = match form {
-        edit_detect::EditForm::Assign { lhs } => edit::apply_assign(&text, lhs, filter),
-        edit_detect::EditForm::Del { path } => edit::del(&text, path),
-    }
-    .map_err(fail(5))?;
-    if run.in_place {
-        write_output(&result, file).map_err(fail(2))?;
-    } else if resolve_color(run.color) {
-        print_colored(&result);
-    } else {
-        println!("{result}");
-    }
-    Ok(ExitCode::SUCCESS)
-}
-
-/// Edit expressions run without jq, so jq's options would be silently
-/// ignored. Only the filter and the color options are accepted.
-fn reject_jq_options(run: &Run) -> anyhow::Result<()> {
-    // `-c` is accepted and ignored: edit output is never compacted (#68).
-    let is_accepted = |a: &str| {
-        args::COLOR_OPTIONS.contains(&a)
-            || a == "--compact-output"
-            || (a.len() > 1
-                && a.starts_with('-')
-                && !a.starts_with("--")
-                && a[1..].chars().all(|c| matches!(c, 'c' | 'C' | 'M')))
-    };
-    let mut filter_skipped = false;
-    let mut rejected = Vec::new();
-    for a in &run.jq_args {
-        if !filter_skipped && Some(a) == run.filter.as_ref() {
-            filter_skipped = true;
-        } else if a != "--" && !is_accepted(a) {
-            rejected.push(a.as_str());
-        }
-    }
-    if rejected.is_empty() {
-        return Ok(());
-    }
-    let short_i = |a: &&str| a.starts_with('-') && !a.starts_with("--") && a.contains('i');
-    let hint = if rejected.iter().any(short_i) {
-        " (use --in-place to write the file)"
-    } else {
-        ""
-    };
-    Err(anyhow!(
-        "jq options are not supported with edit expressions yet: {}{hint}",
-        rejected.join(" ")
-    ))
-}
-
-fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
-    // jq reads --slurpfile files itself, so it gets converted copies.
+/// jq reads --slurpfile files itself, so it gets converted copies. The
+/// copies live as long as the returned files.
+fn convert_slurpfiles(run: &mut Run) -> Result<Vec<tempfile::NamedTempFile>, Failure> {
     let mut slurped = Vec::new();
     for &i in &run.slurpfiles {
         let path = run.jq_args[i].clone();
@@ -200,6 +154,128 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
         run.jq_args[i] = copy.path().to_string_lossy().into_owned();
         slurped.push(copy);
     }
+    Ok(slurped)
+}
+
+/// jq options that change how jq reads its input or writes its output.
+/// Edit mode reads one document and writes it back in its own format.
+const EDIT_REJECTED_OPTIONS: [&str; 18] = [
+    "--debug-trace",
+    "--debug-dump-disasm",
+    "--build-configuration",
+    "--run-tests",
+    "--null-input",
+    "--raw-input",
+    "--slurp",
+    "--stream",
+    "--stream-errors",
+    "--seq",
+    "--compact-output",
+    "--raw-output",
+    "--raw-output0",
+    "--join-output",
+    "--ascii-output",
+    "--sort-keys",
+    "--tab",
+    "--indent",
+];
+const EDIT_REJECTED_SHORT: [char; 10] = ['n', 'R', 's', 'c', 'r', 'j', 'a', 'S', 'h', 'V'];
+
+fn check_edit_options(run: &Run) -> anyhow::Result<()> {
+    for option in &run.options {
+        let rejected = if option.starts_with("--") {
+            EDIT_REJECTED_OPTIONS.contains(&option.as_str())
+                || option.starts_with("--debug-trace")
+                || option.starts_with("--debug-dump-disasm")
+        } else {
+            option[1..]
+                .chars()
+                .any(|c| EDIT_REJECTED_SHORT.contains(&c))
+        };
+        if rejected {
+            return Err(anyhow!(
+                "{option} cannot be used with --edit: edits keep the file's own format"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn run_edit(mut run: Run) -> Result<ExitCode, Failure> {
+    check_edit_options(&run).map_err(fail(2))?;
+    if run.in_place && (run.files.is_empty() || run.files.iter().any(|f| f == "-")) {
+        return Err(fail(2)(anyhow!("--in-place requires a file argument")));
+    }
+    if !run.in_place && run.files.len() > 1 {
+        return Err(fail(2)(anyhow!("--edit takes one input file")));
+    }
+    let _slurped = convert_slurpfiles(&mut run)?;
+    // jqc colors the edited document itself; jq's color codes would break
+    // reading its result. jq's -M wins over -C wherever -C stands.
+    let mut jq_args = vec!["-c".to_string(), "-M".to_string()];
+    jq_args.extend(run.jq_args.iter().cloned());
+    let inputs: Vec<Option<&str>> = if run.files.is_empty() {
+        vec![None]
+    } else {
+        run.files
+            .iter()
+            .map(|f| Some(f.as_str()).filter(|f| *f != "-"))
+            .collect()
+    };
+    for file in inputs {
+        let text = read_input(file).map_err(fail(2))?;
+        let edited = edit_document(&jq_args, &text, file.unwrap_or("<stdin>"))?;
+        if run.in_place {
+            write_output(&edited, file).map_err(fail(2))?;
+        } else if resolve_color(run.color) {
+            print_colored(&edited)?;
+        } else {
+            print_out(&edited)?;
+        }
+    }
+    Ok(ExitCode::SUCCESS)
+}
+
+/// One document: jq computes the edited value from the converted JSON, and
+/// only the difference is written back into `text`.
+fn edit_document(jq_args: &[String], text: &str, name: &str) -> Result<String, Failure> {
+    let values = jsonc::convert(text, name).map_err(fail(5))?;
+    let [converted] = values.as_slice() else {
+        return Err(fail(5)(anyhow!(
+            "an edit needs exactly one value in {name}, found {}",
+            values.len()
+        )));
+    };
+    // jq canonicalizes number spellings (`1e2` becomes `1E+2`), so the
+    // original value is compared in the spelling jq gives it back. jq prints
+    // NaN as null, which would make an edit to null look like no change, so
+    // NaN is mapped to a string no result can equal (`patch::NAN_MARK`).
+    const CANONICALIZE: &str = r#"def w: if type == "object" then map_values(w) elif type == "array" then map(w) elif type == "number" and isnan then "\u0000jqc:NaN" else . end; w"#;
+    let (status, canonical) =
+        jq::output(&["-c".to_string(), CANONICALIZE.to_string()], converted).map_err(fail(2))?;
+    if !status.success() {
+        return Err(jq_failed(status));
+    }
+    let canonical = jsonc::convert(&canonical, "jq's output").map_err(fail(5))?;
+    let [source] = canonical.as_slice() else {
+        return Err(fail(5)(anyhow!("jq did not return one value for {name}")));
+    };
+    let (status, stdout) = jq::output(jq_args, converted).map_err(fail(2))?;
+    if !status.success() {
+        return Err(jq_failed(status));
+    }
+    let results = jsonc::convert(&stdout, "jq's output").map_err(fail(5))?;
+    let [result] = results.as_slice() else {
+        return Err(fail(5)(anyhow!(
+            "the edit produced {} results; it must produce exactly one",
+            results.len()
+        )));
+    };
+    patch::write_back(text, source, result).map_err(fail(5))
+}
+
+fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
+    let slurped = convert_slurpfiles(&mut run)?;
 
     if run.raw_input {
         // -R reads text, not JSON, so jq reads the inputs itself, with each
@@ -218,8 +294,9 @@ fn run_filter(mut run: Run) -> Result<ExitCode, Failure> {
     let failures = Arc::new(Mutex::new(Failures::default()));
     let feeder_failures = Arc::clone(&failures);
     let files = run.files;
+    let seq = run.options.iter().any(|o| o == "--seq");
     thread::spawn(move || {
-        feed(&mut stdin, &files, &feeder_failures);
+        feed(&mut stdin, &files, seq, &feeder_failures);
         // Closing stdin after recording the failures lets jq finish first.
         drop(stdin);
     });
@@ -269,7 +346,7 @@ struct Failures {
 
 /// Writes the inputs to jq as JSON, one file after another. Stops quietly
 /// when jq stops reading.
-fn feed(jq: &mut impl Write, files: &[String], failures: &Mutex<Failures>) {
+fn feed(jq: &mut impl Write, files: &[String], seq: bool, failures: &Mutex<Failures>) {
     let inputs: Vec<Option<&str>> = if files.is_empty() {
         vec![None]
     } else {
@@ -287,6 +364,12 @@ fn feed(jq: &mut impl Write, files: &[String], failures: &Mutex<Failures>) {
                 continue;
             }
         };
+        if seq {
+            if jq.write_all(seq_records(&text).as_bytes()).is_err() {
+                return;
+            }
+            continue;
+        }
         let prefix = jsonc::convert_prefix(&text, file.unwrap_or("<stdin>"));
         let mut json: String = prefix.values.iter().map(|v| format!("{v}\n")).collect();
         if let Some(e) = prefix.error {
@@ -306,6 +389,52 @@ fn feed(jq: &mut impl Write, files: &[String], failures: &Mutex<Failures>) {
     }
 }
 
+/// jq --seq reads values that each start with a record separator (RS) and
+/// skips, with a warning, what it can't read. Each RS-separated part is
+/// converted as JSONC; a part that doesn't convert, and any text before the
+/// first RS, goes to jq as written, so jq skips what it would skip.
+fn seq_records(text: &str) -> String {
+    let mut parts = text.split('\x1e');
+    let mut out = parts.next().unwrap_or("").to_string();
+    for part in parts {
+        out.push('\x1e');
+        let prefix = jsonc::convert_prefix(part, "<seq>");
+        out.push_str(&prefix.values.join("\n"));
+        if prefix.error.is_some() {
+            // jq skips the broken remainder with a warning. A value glued
+            // to it (`1,`) must stay glued, so jq skips the value too;
+            // whitespace and comments in between become one newline.
+            let rest = skip_trivia(&part[prefix.rest..]);
+            if rest.len() < part.len() - prefix.rest {
+                out.push('\n');
+            }
+            out.push_str(rest);
+        } else if part.len() > part.trim_end().len() || jsonc::ends_with_comment(part) {
+            // jq reads a value as cut off only when the record's text
+            // ends exactly at the value, so end it with a newline
+            // whenever anything (whitespace or a comment) followed it.
+            out.push('\n');
+        }
+    }
+    out
+}
+
+/// `text` after its leading whitespace and comments. Only what jq reads as
+/// whitespace counts: a value followed by, say, a form feed is glued to
+/// what comes next for jq.
+fn skip_trivia(mut text: &str) -> &str {
+    loop {
+        let trimmed = text.trim_start_matches([' ', '\t', '\n', '\r']);
+        text = if let Some(rest) = trimmed.strip_prefix("//") {
+            rest.split_once('\n').map_or("", |(_, rest)| rest)
+        } else if let Some(rest) = trimmed.strip_prefix("/*") {
+            rest.split_once("*/").map_or("", |(_, rest)| rest)
+        } else {
+            return trimmed;
+        };
+    }
+}
+
 fn exit_code(status: ExitStatus) -> ExitCode {
     #[cfg(unix)]
     {
@@ -317,9 +446,24 @@ fn exit_code(status: ExitStatus) -> ExitCode {
     ExitCode::from(status.code().unwrap_or(1) as u8)
 }
 
-fn print_colored(text: &str) {
+/// Print `text` and a newline. When the reader has closed the pipe
+/// (`| head`), end quietly with 141, as a process killed by SIGPIPE does
+/// (and as jq does in filter mode).
+fn print_out(text: &str) -> Result<(), Failure> {
+    let mut out = io::stdout().lock();
+    match writeln!(out, "{text}").and_then(|()| out.flush()) {
+        Ok(()) => Ok(()),
+        Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Err(Failure {
+            status: 141,
+            error: None,
+        }),
+        Err(e) => Err(fail(2)(anyhow!("Failed to write to stdout: {e}"))),
+    }
+}
+
+fn print_colored(text: &str) -> Result<(), Failure> {
     let palette = color::Palette::from_env();
-    println!("{}", color::colorize_jsonc(text, &palette));
+    print_out(&color::colorize_jsonc(text, &palette))
 }
 
 /// `color` is `-C` (`Some(true)`) or `-M` (`Some(false)`).
