@@ -464,12 +464,13 @@ fn exit_code(status: ExitStatus) -> ExitCode {
     ExitCode::from(status.code().unwrap_or(1) as u8)
 }
 
-/// Print `text` and a newline. When the reader has closed the pipe
-/// (`| head`), end quietly with 141, as a process killed by SIGPIPE does
-/// (and as jq does in filter mode).
+/// Print `text`, ending it with a newline if it doesn't end with one. When
+/// the reader has closed the pipe (`| head`), end quietly with 141, as a
+/// process killed by SIGPIPE does (and as jq does in filter mode).
 fn print_out(text: &str) -> Result<(), Failure> {
     let mut out = io::stdout().lock();
-    match writeln!(out, "{text}").and_then(|()| out.flush()) {
+    let newline = if text.ends_with('\n') { "" } else { "\n" };
+    match write!(out, "{text}{newline}").and_then(|()| out.flush()) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == io::ErrorKind::BrokenPipe => Err(Failure {
             status: 141,

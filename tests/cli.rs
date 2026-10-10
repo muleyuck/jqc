@@ -1890,3 +1890,26 @@ fn fmt_reads_a_file_named_dash_as_dot_slash_dash() {
         .success()
         .stdout("[1] // c\n");
 }
+
+#[test]
+fn fmt_and_edit_keep_a_final_newline_single() {
+    // The file's own final newline ends the output; no blank line follows.
+    jqc()
+        .args(["fmt"])
+        .write_stdin("{\"a\": 1} // c\n")
+        .assert()
+        .success()
+        .stdout("{\"a\": 1} // c\n");
+    jqc()
+        .args(["--edit", ".a = 2"])
+        .write_stdin("{\"a\": 1} // c\n")
+        .assert()
+        .success()
+        .stdout("{\"a\": 2} // c\n");
+    jqc_default_colors()
+        .args(["-C", "fmt"])
+        .write_stdin("[]\n")
+        .assert()
+        .success()
+        .stdout("\x1b[1;39m[]\x1b[0m\n");
+}
