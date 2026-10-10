@@ -4,186 +4,179 @@
 
 # jqc
 
-**🧩 jq for JSONC — query, view, and edit JSON-with-Comments files without losing your comments.**
+**jq for JSONC.** jqc reads JSONC. Everything else is jq.
 
-`jq` is the standard tool for JSON on the command line. But many config files — VS Code `settings.json`, `tsconfig.json`, `deno.jsonc`, `biome.jsonc` — use JSONC, which extends JSON with `//` and `/* */` comments. Piping these through `jq` silently strips every comment.
+jqc turns JSONC (comments, trailing commas, single-quoted strings) into JSON and hands it to the `jq` you have installed. `jq` alone stops with a parse error on files like VS Code `settings.json`, `tsconfig.json`, `deno.jsonc` or `biome.jsonc`, because they contain comments. jqc also edits those files without losing the comments.
 
 ![demo](https://github.com/user-attachments/assets/24711d01-76b0-4a37-a3ed-e13a90a62696)
 
 ## Install
 
-**Homebrew**
+**Homebrew** (also installs jq)
 
 ```bash
 brew install muleyuck/tap/jqc
 ```
 
-**Shell script (macOS / Linux)**
+**Shell script (macOS / Linux)** (install jq separately)
 
 ```bash
 curl --proto '=https' --tlsv1.2 -LsSf \
   https://github.com/muleyuck/jqc/releases/latest/download/jqc-installer.sh | sh
 ```
 
-**Cargo**
+**Cargo** (install jq separately)
 
 ```bash
 cargo install --git https://github.com/muleyuck/jqc
 ```
 
----
+jq is needed for filters and `--edit`; `fmt` does not need it. Get jq from <https://jqlang.org/download/>. Without it, jqc exits with status 2:
 
-## 1. Query with jq syntax
+```
+Error: jq not found: jqc runs filters with jq. Install jq (https://jqlang.org/download/) and make sure it is on PATH
+```
 
-`jqc` accepts the same filter expressions as `jq`. If you already know `jq`, you already know how to query with `jqc`.
+## Filter
+
+Use jqc exactly as you use jq. Options and filters are described in the [jq manual](https://jqlang.org/manual/).
+
+```console
+$ cat tsconfig.json
+{
+  // Compiler settings
+  "compilerOptions": {
+    "target": "ES2022", /* output level */
+    "strict": true,
+  },
+}
+$ jqc '.compilerOptions.target' tsconfig.json
+"ES2022"
+$ jqc -c '.compilerOptions' - < tsconfig.json
+{"target":"ES2022","strict":true}
+$ jqc -r '.[] | .name' <<'EOF'
+[
+  {"name": "core"}, // always on
+  {'name': 'auth'},
+]
+EOF
+core
+auth
+```
+
+- Input files, `-` (standard input) and `--slurpfile` files are converted from JSONC. Input of `--rawfile` and `-R` is passed to jq as it is.
+- `--help` shows jqc's help; `-h` shows jq's help. `--version` shows the versions of both jqc and jq.
+
+## `fmt`
+
+`jqc fmt [--in-place] [file]` validates JSONC and prints it with its comments kept. It does not need jq. It exits with status 5 when the input cannot be parsed (2 when the file cannot be read), so it works as a pre-commit check.
+
+```console
+$ jqc fmt tsconfig.json
+{
+  // Compiler settings
+  "compilerOptions": {
+    "target": "ES2022", /* output level */
+    "strict": true,
+  },
+}
+$ echo '{"a": }' | jqc fmt
+Error: Failed to parse JSONC: Unexpected close brace on line 1 column 7
+```
+
+`-` reads standard input. `--in-place` needs a file; it validates the file and writes the same content back. `-C` and `-M` work as in jq and may come before `fmt` (`jqc -C fmt`).
+
+## Edit: `--edit` / `--in-place`
+
+`jqc --edit <filter> [file]` prints the edited document. `jqc --in-place <filter> <files...>` writes the result back to each file. Without either option, jqc runs the filter as jq does (see Differences from jq).
+
+jq computes the result. jqc compares it with the original value and writes only the differences into the original text, so comments, layout and the spelling of unchanged values (number formats, string escapes) stay.
+
+```console
+$ cat server.jsonc
+{
+  // Server settings
+  "port": 3000, // default port
+  "ratio": 1.0,
+  "name": "caf\u00e9"
+}
+$ jqc --edit '.port = 8080 | .debug = true' server.jsonc
+{
+  // Server settings
+  "port": 8080, // default port
+  "ratio": 1.0,
+  "name": "caf\u00e9",
+  "debug": true
+}
+```
+
+How the result is written back:
+
+- Object keys keep their order. A key the result no longer has is deleted (every occurrence, if it is duplicated). New keys go at the end. For a duplicated key, the last occurrence is rewritten.
+- Arrays of the same length are updated element by element. If elements were only appended, only the new elements are added. Any other change replaces the whole array.
+- A value whose type changed is replaced as a whole.
+
+Both the input and the result must be exactly one value each; otherwise jqc exits with status 5. `--edit` takes one file or standard input. `--in-place` takes one or more files (standard input and `-` are not allowed; status 2).
+
+These options cannot be used with `--edit` or `--in-place` (status 2), because an edit reads one document and writes it back in its own format:
+
+- `--null-input`, `--raw-input`, `--slurp`, `--stream`, `--stream-errors`, `--seq`
+- `--compact-output`, `--raw-output`, `--raw-output0`, `--join-output`, `--ascii-output`, `--sort-keys`, `--tab`, `--indent`
+- `--debug-trace`, `--debug-dump-disasm`, `--build-configuration`, `--run-tests`
+- `-n`, `-R`, `-s`, `-c`, `-r`, `-j`, `-a`, `-S`, `-h`, `-V`
+
+For `-c`, `-r` and the like, run the filter without `--edit`.
+
+```console
+$ jqc --edit -c '.a = 1' < /dev/null
+Error: -c cannot be used with --edit: edits keep the file's own format
+```
+
+## Colors
+
+Whether to color is decided as in jq: on for a terminal, `-C` to force, `-M` or `NO_COLOR` to disable.
+
+Colors come from `JQ_COLORS`, with the same rules as jq. jqc adds a 9th field for comments (default `3;90`). jq ignores the 9th field, so you can share one value with jq:
 
 ```bash
-jqc '.port' config.jsonc
-# 3000
-
-jqc '.compilerOptions.target' tsconfig.json
-# "ES2022"
-
-jqc '.plugins[]' config.jsonc
-# "core"
-# "auth"
-
-jqc '.plugins[0]' config.jsonc
-# "core"
-
-cat config.jsonc | jqc '.host'
-# "localhost"
+export JQ_COLORS="0;90:0;39:0;39:0;39:0;32:1;39:1;39:1;34:3;36"
 ```
 
-**Output flags** (same as `jq`)
+The fields are `null:false:true:numbers:strings:arrays:objects:object keys:comments`. An invalid value prints `Failed to set $JQ_COLORS` and falls back to the default colors.
 
-| Flag | Behavior |
-|------|----------|
-| `-r` | Raw output — strips surrounding quotes from strings |
-| `-c` | Compact output — no newlines |
-| `-n` | Null input — use `null` as the input instead of reading stdin or a file; cannot be combined with a FILE argument |
+In filter mode, the installed jq colors the output, so colors differ between jq versions (jq 1.7.1, which ships with macOS, places its reset codes differently and limits each `JQ_COLORS` field to 12 characters). `fmt` and `--edit` use the default colors of jq 1.8.2.
 
-> `jqc` uses [jaq](https://github.com/01mf02/jaq) as its filter engine. The vast majority of `jq` filters work without modification. For known differences, see the [jaq compatibility notes](https://github.com/01mf02/jaq?tab=readme-ov-file#differences-from-jq).
+## Exit status
 
----
+- `2`: wrong usage, a file that cannot be read or written, jq not found.
+- `5`: input files or standard input that jqc cannot parse as JSONC, or an edit with the wrong number of values. A `--slurpfile` that cannot be parsed gives 2, as in jq.
+- Otherwise the exit status of jq (`-e` works as in jq). An unreadable file gives 2 instead of jq's status, unless jq itself exits with 2 or 3 or is killed by a signal.
+- `141` when the output pipe is closed; `128 + signal` when jq ends with a signal.
 
-## 2. View JSONC with color and comments
-
-Running `jqc` without a filter, or using `fmt`, outputs JSONC with syntax highlighting. Comments are colorized alongside the JSON tokens — something `jq` cannot do because it cannot parse JSONC at all.
-
-```bash
-# Colorized output — comments are preserved
-jqc fmt config.jsonc
-
-# Identity filter — pretty-prints with color, but comments are stripped
-# (the filter engine processes pure JSON values and does not carry comments through)
-jqc '.' config.jsonc
+```console
+$ echo '[1,2,3]' | jqc -e '.[] | select(. > 5)'; echo $?
+4
 ```
 
-Output when writing to a terminal is colorized automatically. When piped, output is plain. Override with:
+## Differences from jq
 
-```bash
-jqc -C fmt config.jsonc         # force color (e.g. when piping to less -R)
-jqc -M fmt config.jsonc         # disable color
-NO_COLOR=1 jqc fmt config.jsonc # disable color (https://no-color.org/)
-```
+jqc converts the input before jq sees it, so some behavior differs from jq.
 
-Token colors are customizable via `JQC_COLORS` — a colon-separated list of 9 ANSI SGR codes:
+- `input_filename` is always `"<stdin>"`, even for named files (jq prints the file name): jqc passes the input on standard input.
+- jqc reads all input before it runs jq. `tail -f | jqc .` prints nothing and `first(inputs)` waits for the end of the input. jqc reads standard input even when the filter does not use it (`printf x | { jqc -n 1; cat; }` leaves nothing for `cat`). `jqc -n 1 missing.json` exits with 2 (jq: 0).
+- When jq stops reading early (`halt`, `first(inputs)`), whether an error in the unread input is reported depends on timing.
+- `halt_error(2)` and `halt_error(3)` hide the error of an unreadable input and its exit status 2.
+- With `--stream`, events come from the document after duplicate keys are merged. With `--stream` and `--stream-errors`, no events are printed from inside a broken value.
+- With `--seq`: JSONC reads NBSP and form feed as whitespace (jq does not). A record that holds a comment and spans files is skipped. An unclosed block comment after a value gets no jq warning. The position in a jq warning points into the converted text. A record that holds only a comment prints nothing (jq warns).
+- For broken input, jq's `Unmatched ']'` message is printed above the jqc message. The jqc message has the real position and reason.
+- Arguments must be UTF-8.
+- Edit: NaN in the edited document becomes null, as in jq's output. Writing the string `"\u0000jqc:NaN"` over a NaN is ignored. A computed value equal to the largest double leaves `Infinity` in place (`.a = infinite`), because jq prints it as `1.7976931348623157e+308`, the same value; a literal `.a = 1.7976931348623157e+308` does replace it.
+- Edit: deleting, adding or retyping thousands of elements in one container is slow, and the time grows faster than the container (about 2 seconds to retype 4,000 array elements, about 6 seconds to append 4,000 elements to a 4,000-element array). Changing values of the same kind (numbers to numbers, strings to strings) is fast.
+- With an invalid `JQ_COLORS` and several files for `--in-place`, jq warns once per file. With a jq other than 1.8.2, jq's warning and jqc's colors can disagree.
 
-```
-null : false : true : number : string : array : object : key : comment
-```
+## Development
 
-Leave a field empty to keep the default. Example — bold cyan numbers:
-
-```bash
-export JQC_COLORS="::::1;36::::"
-jqc fmt config.jsonc
-```
-
-`fmt` also validates JSONC syntax and exits non-zero on invalid input, making it usable as a pre-commit check:
-
-```bash
-jqc fmt tsconfig.json > /dev/null && echo "valid"
-```
-
----
-
-## 3. Edit while preserving comments
-
-`jqc` recognizes jq's own assignment and `del` syntax as an edit expression and rewrites the JSONC source text directly — no separate subcommand needed. Only the targeted value changes — all comments, including inline comments on the same line as the edited value, are left untouched.
-
-```
-Before                              After: jqc '.port = 8080' -i config.jsonc
-──────────────────────────────────  ──────────────────────────────────────────────
-{                                   {
-  // Server settings                  // Server settings
-  "host": "localhost",                "host": "localhost",
-  "port": 3000, // default port  →    "port": 8080, // default port
-  /* Feature flags */                 /* Feature flags */
-  "debug": false                      "debug": false
-}                                   }
-```
-
-Without `-i`, the result is printed to stdout. Add `-i` to overwrite the file atomically.
-
-### Assignment — update or create a key
-
-All of jq's assignment operators are supported: `=`, `|=`, `+=`, `-=`, `*=`, `/=`, `%=`, `//=`. The right-hand side is evaluated as a full jq filter expression.
-
-```bash
-jqc '.port = 8080' config.jsonc                        # print to stdout
-jqc '.port = 8080' -i config.jsonc                      # edit in-place
-
-jqc '.host = "production.example.com"' config.jsonc     # string value
-jqc '.compilerOptions.strict = false' tsconfig.json     # boolean
-jqc '.compilerOptions.target = "ES2022"' tsconfig.json
-
-jqc '.timeout = 30' config.jsonc                        # creates the key if it doesn't exist yet
-
-jqc '.count |= . + 1' config.jsonc                       # update relative to the current value
-jqc '.plugins += ["logging"]' config.jsonc               # append to an array
-jqc '.items[] += 1' config.jsonc                         # bulk-apply across every matched path
-```
-
-If the target key doesn't exist, the assignment creates it (the parent object must already exist — `jqc '.server.timeout = 30'` fails if `.server` is missing).
-
-### `del(...)` — remove a value
-
-```bash
-jqc 'del(.debug)' config.jsonc
-jqc 'del(.compilerOptions.noImplicitAny)' -i tsconfig.json
-jqc 'del(.tags[0])' config.jsonc
-```
-
-`del()` takes a single path expression (it does not accept jq's comma-separated multi-argument form, e.g. `del(.a, .b)`). If the path matches nothing, or an ancestor is missing, it's a no-op.
-
-### Duplicate keys
-
-JSONC allows a key to appear more than once in an object. jq keeps the last occurrence and drops the rest from its output. jqc reads values the same way, but it only rewrites the text on the path you edit:
-
-- An edit targets the last occurrence, which is the one jq sees.
-- Earlier occurrences stay in the file along with their comments. jq ignores them when it reads the result, so the values match what jq would output.
-- `del(...)` removes every occurrence of the key, so an earlier value can't resurface.
-- Duplicate keys elsewhere in the document are left alone. jq would drop them from its output.
-
-```bash
-jqc '.port = 8080' <<< '{"port": 3000, "port": 4000}'   # {"port": 3000, "port": 8080}
-jqc 'del(.port)'   <<< '{"port": 3000, "port": 4000}'   # {}
-```
-
----
-
-## Comparison with jq
-
-| | jq | jqc |
-|---|---|---|
-| Filter syntax | yes | yes — same syntax |
-| Reads JSONC | no — parse error | yes |
-| Colorized output with comments | no | yes |
-| Comment-preserving edits | no | yes |
-| In-place editing | no | yes (`-i`) |
-| Custom colors | `JQ_COLORS` (8 fields) | `JQC_COLORS` (9 fields, adds comment color) |
+`make` runs check, test, clippy and fmt. The tests need `jq` on `PATH`. `scripts/jq-compat.sh` and `tests/fixtures/jq-compat/cases.json` list the differences from jq (CI runs them with jq 1.8.2). jqc's own behavior is covered by the E2E tests in `tests/cli.rs`.
 
 ## License
 
