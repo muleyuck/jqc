@@ -15,6 +15,17 @@ const DEFAULT_COLORS: [&str; 9] = [
     "3;90", // comments — italic dark gray (jqc's own; jq has no comments)
 ];
 
+/// The colors jq reads from `JQ_COLORS`; jqc reads one more for comments.
+const JQ_FIELDS: usize = 8;
+
+/// The leading run of `0123456789;`, which is all jq takes as a color.
+fn color_codes(s: &str) -> &str {
+    &s[..s
+        .bytes()
+        .take_while(|b| b.is_ascii_digit() || *b == b';')
+        .count()]
+}
+
 /// JSON/JSONC token kinds used to look up colors from the palette.
 pub enum TokenKind {
     Null,
@@ -28,7 +39,7 @@ pub enum TokenKind {
     Comment,
 }
 
-/// Resolved palette after applying `JQC_COLORS` overrides.
+/// The colors for each token kind, from `JQ_COLORS` or the defaults.
 pub struct Palette {
     null: String,
     bool_false: String,
@@ -58,19 +69,49 @@ impl Default for Palette {
 }
 
 impl Palette {
-    /// Parse `JQC_COLORS` environment variable and override defaults.
-    /// Format: "null:false:true:number:string:array:object:key:comment" (ANSI partial escapes, 9 fields)
-    pub fn from_env() -> Self {
-        match std::env::var("JQC_COLORS") {
-            Ok(val) => Self::from_jqc_colors(&val),
-            Err(_) => Self::default(),
+    /// The palette from `JQ_COLORS`, and whether jq would reject it (jq then
+    /// warns and uses its defaults).
+    pub fn from_env() -> (Palette, bool) {
+        match std::env::var_os("JQ_COLORS") {
+            None => (Palette::default(), false),
+            // jq reads bytes and stops after its 8th field, so a non-UTF-8
+            // byte only matters where jq would reject it anyway.
+            Some(value) => match Palette::parse(&value.to_string_lossy()) {
+                Some(palette) => (palette, false),
+                None => (Palette::default(), true),
+            },
         }
     }
 
-    /// Parse a `JQC_COLORS`-formatted string (colon-separated, 9 fields).
-    fn from_jqc_colors(s: &str) -> Self {
+    /// `JQ_COLORS` read as jq 1.8.2 reads it (`jq_set_colors` in
+    /// src/jv_print.c), plus jqc's 9th field for comments. `None` when jq
+    /// would reject it.
+    pub fn parse(s: &str) -> Option<Palette> {
+        let mut fields = Vec::new();
+        let mut rest = s;
+        loop {
+            let field = color_codes(rest);
+            fields.push(field);
+            rest = &rest[field.len()..];
+            // jq doesn't look past its 8th field.
+            if rest.is_empty() || fields.len() == JQ_FIELDS {
+                break;
+            }
+            rest = rest.strip_prefix(':')?;
+        }
+        // jq never reads the comment field, so it never makes the value invalid.
+        let comment = match rest.strip_prefix(':') {
+            Some(after) if fields.len() == JQ_FIELDS => {
+                Some(color_codes(after)).filter(|c| !c.is_empty())
+            }
+            _ => None,
+        };
+        // jq doesn't count an empty last field ("" and "0;31:").
+        if fields.last() == Some(&"") {
+            fields.pop();
+        }
         let mut p = Palette::default();
-        let fields: [&mut String; 9] = [
+        let slots = [
             &mut p.null,
             &mut p.bool_false,
             &mut p.bool_true,
@@ -79,14 +120,14 @@ impl Palette {
             &mut p.array,
             &mut p.object,
             &mut p.key,
-            &mut p.comment,
         ];
-        for (field, part) in fields.into_iter().zip(s.split(':')) {
-            if !part.is_empty() {
-                *field = part.to_string();
-            }
+        for (slot, field) in slots.into_iter().zip(fields) {
+            *slot = field.to_string();
         }
-        p
+        if let Some(comment) = comment {
+            p.comment = comment.to_string();
+        }
+        Some(p)
     }
 
     /// Apply ANSI color for the given token kind. Single source of truth for all colorization.
@@ -267,26 +308,69 @@ mod tests {
         assert!(out.contains("2"), "got: {out}");
     }
 
+    fn parsed(s: &str) -> Palette {
+        Palette::parse(s).unwrap_or_else(|| panic!("{s:?} should be accepted"))
+    }
+
     #[test]
-    fn test_jqc_colors_override() {
-        let p = Palette::from_jqc_colors("0;31::::::::");
+    fn test_parse_fields_in_jq_order() {
+        let p = parsed("0;31:0;32:0;33:0;34:0;35:0;36:0;37:1;31:3;36");
+        assert_eq!(
+            [&p.null, &p.bool_false, &p.bool_true, &p.number, &p.string],
+            ["0;31", "0;32", "0;33", "0;34", "0;35"]
+        );
+        assert_eq!([&p.array, &p.object, &p.key], ["0;36", "0;37", "1;31"]);
+        assert_eq!(p.comment, "3;36");
+    }
+
+    #[test]
+    fn test_parse_missing_and_empty_fields_like_jq() {
+        // Missing fields and an empty last field keep the defaults.
+        let p = parsed("0;31:");
         assert_eq!(p.null, "0;31");
-        assert_eq!(p.string, DEFAULT_COLORS[4]);
+        assert_eq!(p.bool_false, DEFAULT_COLORS[1]);
+        let p = parsed("");
+        assert_eq!(p.null, DEFAULT_COLORS[0]);
+        // Any other empty field means no color.
+        assert_eq!(parsed(":").null, "");
+        let p = parsed("::::0;35");
+        assert_eq!(
+            [&p.null, &p.bool_false, &p.bool_true, &p.number],
+            ["", "", "", ""]
+        );
+        assert_eq!(p.string, "0;35");
+        assert_eq!(p.array, DEFAULT_COLORS[5]);
+        // Fewer than 8 fields: no comment field.
+        assert_eq!(parsed("0;31:0;32").comment, DEFAULT_COLORS[8]);
     }
 
     #[test]
-    fn test_jqc_colors_partial() {
-        let p = Palette::from_jqc_colors("::::0;33::::");
-        assert_eq!(p.string, "0;33");
-        assert_eq!(p.null, DEFAULT_COLORS[0]);
+    fn test_parse_stops_after_the_eighth_field_like_jq() {
+        // jq doesn't look past its 8th field's codes.
+        let p = parsed("1:1:1:1:1:1:1:1;3x4");
+        assert_eq!(p.key, "1;3");
+        assert_eq!(p.comment, DEFAULT_COLORS[8]);
+        // An empty 8th field is jq's empty last field, even before a 9th.
+        let p = parsed("1:1:1:1:1:1:1::3;90");
+        assert_eq!(p.object, "1");
+        assert_eq!(p.key, DEFAULT_COLORS[7]);
+        assert_eq!(p.comment, "3;90");
+        // The 9th field is jqc's own: never rejected, cut at a bad character.
+        assert_eq!(parsed("1:1:1:1:1:1:1:1;34:3;36x").comment, "3;36");
+        assert_eq!(parsed("1:1:1:1:1:1:1:1;34:x").comment, DEFAULT_COLORS[8]);
+        // Eight empty fields, then a comment color.
+        let p = parsed("::::::::3;36");
+        assert_eq!(p.object, "");
+        assert_eq!(p.key, DEFAULT_COLORS[7]);
+        assert_eq!(p.comment, "3;36");
     }
 
     #[test]
-    fn test_jqc_colors_comment() {
-        // 9th field overrides comment color
-        let p = Palette::from_jqc_colors("::::::::0;31");
-        assert_eq!(p.comment, "0;31");
-        assert_eq!(p.null, DEFAULT_COLORS[0]);
+    fn test_parse_rejects_what_jq_rejects() {
+        assert!(Palette::parse("red").is_none());
+        assert!(Palette::parse("1:x:1").is_none());
+        assert!(Palette::parse("0;31 ").is_none());
+        assert!(Palette::parse("1:1:1:1:1:1:1x").is_none());
     }
 
     #[test]

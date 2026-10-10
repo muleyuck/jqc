@@ -35,6 +35,8 @@ jqc's own options:
 Subcommands:
   fmt          Validate JSONC and print it with its comments
 
+Colors: JQ_COLORS sets them as in jq; a 9th field sets the comment color.
+
 jqc needs jq on PATH: https://jqlang.org/download/
 ";
 
@@ -124,6 +126,12 @@ fn run(args: Vec<String>) -> Result<ExitCode, Failure> {
 }
 
 fn run_fmt(file: Option<&str>, in_place: bool, color: Option<bool>) -> Result<ExitCode, Failure> {
+    // Like jq, warn about a bad JQ_COLORS whether or not the output is
+    // colored. fmt doesn't run jq, so jqc warns itself.
+    let (palette, invalid) = color::Palette::from_env();
+    if invalid {
+        eprintln!("Failed to set $JQ_COLORS");
+    }
     if in_place && file.is_none() {
         return Err(fail(2)(anyhow!("--in-place requires a file argument")));
     }
@@ -133,7 +141,7 @@ fn run_fmt(file: Option<&str>, in_place: bool, color: Option<bool>) -> Result<Ex
     if in_place {
         write_output(&text, file).map_err(fail(2))?;
     } else if resolve_color(color) {
-        print_colored(&text)?;
+        print_colored(&text, &palette)?;
     } else {
         print_out(&text)?;
     }
@@ -203,6 +211,8 @@ fn check_edit_options(run: &Run) -> anyhow::Result<()> {
 
 fn run_edit(mut run: Run) -> Result<ExitCode, Failure> {
     check_edit_options(&run).map_err(fail(2))?;
+    // jq warns about a bad JQ_COLORS itself, when it runs the filter.
+    let (palette, _) = color::Palette::from_env();
     if run.in_place && (run.files.is_empty() || run.files.iter().any(|f| f == "-")) {
         return Err(fail(2)(anyhow!("--in-place requires a file argument")));
     }
@@ -228,7 +238,7 @@ fn run_edit(mut run: Run) -> Result<ExitCode, Failure> {
         if run.in_place {
             write_output(&edited, file).map_err(fail(2))?;
         } else if resolve_color(run.color) {
-            print_colored(&edited)?;
+            print_colored(&edited, &palette)?;
         } else {
             print_out(&edited)?;
         }
@@ -251,8 +261,14 @@ fn edit_document(jq_args: &[String], text: &str, name: &str) -> Result<String, F
     // NaN as null, which would make an edit to null look like no change, so
     // NaN is mapped to a string no result can equal (`patch::NAN_MARK`).
     const CANONICALIZE: &str = r#"def w: if type == "object" then map_values(w) elif type == "array" then map(w) elif type == "number" and isnan then "\u0000jqc:NaN" else . end; w"#;
-    let (status, canonical) =
-        jq::output(&["-c".to_string(), CANONICALIZE.to_string()], converted).map_err(fail(2))?;
+    // The canonical run doesn't run the user's filter; without JQ_COLORS it
+    // can't warn about it again.
+    let (status, canonical) = jq::output(
+        &["-c".to_string(), CANONICALIZE.to_string()],
+        converted,
+        &["JQ_COLORS"],
+    )
+    .map_err(fail(2))?;
     if !status.success() {
         return Err(jq_failed(status));
     }
@@ -260,7 +276,7 @@ fn edit_document(jq_args: &[String], text: &str, name: &str) -> Result<String, F
     let [source] = canonical.as_slice() else {
         return Err(fail(5)(anyhow!("jq did not return one value for {name}")));
     };
-    let (status, stdout) = jq::output(jq_args, converted).map_err(fail(2))?;
+    let (status, stdout) = jq::output(jq_args, converted, &[]).map_err(fail(2))?;
     if !status.success() {
         return Err(jq_failed(status));
     }
@@ -461,9 +477,8 @@ fn print_out(text: &str) -> Result<(), Failure> {
     }
 }
 
-fn print_colored(text: &str) -> Result<(), Failure> {
-    let palette = color::Palette::from_env();
-    print_out(&color::colorize_jsonc(text, &palette))
+fn print_colored(text: &str, palette: &color::Palette) -> Result<(), Failure> {
+    print_out(&color::colorize_jsonc(text, palette))
 }
 
 /// `color` is `-C` (`Some(true)`) or `-M` (`Some(false)`).

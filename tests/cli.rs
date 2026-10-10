@@ -1770,3 +1770,88 @@ fn edit_colors_like_jq() {
         .success()
         .stdout(format!("{COLOR_JQ}\n"));
 }
+
+#[test]
+fn fmt_uses_jq_colors() {
+    // `JQ_COLORS=':::::4;36:7;37:1;31' jq -C -c .` (jq 1.8.2) on the same input.
+    let expected = "\x1b[7;37m{\x1b[0m\x1b[1;31m\"a\"\x1b[0m\x1b[7;37m:\x1b[0m\x1b[4;36m[\x1b[0m\x1b[m1\x1b[0m\x1b[4;36m,\x1b[0m\x1b[7;37m{}\x1b[0m\x1b[4;36m]\x1b[0m\x1b[7;37m}\x1b[0m";
+    jqc_default_colors()
+        .env("JQ_COLORS", ":::::4;36:7;37:1;31")
+        .args(["-C", "fmt"])
+        .write_stdin(r#"{"a":[1,{}]}"#)
+        .assert()
+        .success()
+        .stdout(format!("{expected}\n"));
+}
+
+#[test]
+fn jq_colors_ninth_field_colors_comments() {
+    jqc_default_colors()
+        .env("JQ_COLORS", "0;90:0;39:0;39:0;39:0;32:1;39:1;39:1;34:3;36")
+        .args(["-C", "fmt"])
+        .write_stdin("[1] // c")
+        .assert()
+        .success()
+        .stdout(contains("\x1b[3;36m// c\x1b[0m"));
+}
+
+#[test]
+fn fmt_warns_about_bad_jq_colors_once() {
+    for color in ["-C", "-M"] {
+        jqc_default_colors()
+            .env("JQ_COLORS", "red")
+            .args([color, "fmt"])
+            .write_stdin(r#"{"a":1}"#)
+            .assert()
+            .success()
+            .stderr("Failed to set $JQ_COLORS\n");
+    }
+}
+
+#[test]
+fn edit_warns_about_bad_jq_colors_once() {
+    // jq warns, in the run of the user's filter only.
+    jqc_default_colors()
+        .env("JQ_COLORS", "red")
+        .args(["--edit", ".a = 2"])
+        .write_stdin(r#"{"a":1}"#)
+        .assert()
+        .success()
+        .stdout("{\"a\":2}\n")
+        .stderr("Failed to set $JQ_COLORS\n");
+}
+
+#[test]
+fn edit_filter_sees_jq_colors() {
+    jqc_default_colors()
+        .env("JQ_COLORS", "0;31")
+        .args(["--edit", ".a = $ENV.JQ_COLORS"])
+        .write_stdin(r#"{"a":1}"#)
+        .assert()
+        .success()
+        .stdout("{\"a\":\"0;31\"}\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn jq_colors_non_utf8_bytes_like_jq() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    // jq ignores what follows its 8th field, bytes included.
+    jqc_default_colors()
+        .env("JQ_COLORS", OsStr::from_bytes(b"1:1:1:1:1:1:1:1\xff"))
+        .args(["-C", "fmt"])
+        .write_stdin("{}")
+        .assert()
+        .success()
+        .stdout("\x1b[1m{}\x1b[0m\n")
+        .stderr("");
+    // In an earlier field it is invalid, as in jq.
+    jqc_default_colors()
+        .env("JQ_COLORS", OsStr::from_bytes(b"1\xff"))
+        .args(["-M", "fmt"])
+        .write_stdin("{}")
+        .assert()
+        .success()
+        .stderr("Failed to set $JQ_COLORS\n");
+}
