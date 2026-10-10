@@ -47,6 +47,8 @@
     { "matchManagers": ["mise", "custom.regex"], "matchDepNames": ["cargo:cargo-dist", "cargo-dist"], "groupName": "cargo-dist" },
     { "matchManagers": ["mise", "custom.regex"], "matchDepNames": ["cargo:cargo-dist", "cargo-dist"], "matchUpdateTypes": ["patch", "minor"], "automerge": true },
 
+    { "matchManagers": ["custom.regex"], "matchDepNames": ["jqlang/jq"], "automerge": false },
+
     { "matchUpdateTypes": ["lockFileMaintenance"], "automerge": false }
   ]
 }

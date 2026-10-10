@@ -1737,3 +1737,179 @@ fn seq_keeps_values_before_a_broken_one() {
         .success()
         .stdout("\x1e{\"a\":1}\n\x1e2\n");
 }
+
+/// jqc with jq's default colors: a developer's own JQ_COLORS or NO_COLOR
+/// must not change the colored output the tests expect.
+fn jqc_default_colors() -> Command {
+    let mut cmd = jqc();
+    cmd.env_remove("JQ_COLORS").env_remove("NO_COLOR");
+    cmd
+}
+
+/// `jq -C -c .` (jq 1.8.2, JQ_COLORS unset) on `COLOR_INPUT`.
+const COLOR_INPUT: &str = r#"{"a":[1,null,"s",true,false],"b":{},"c":[],"d":{"e":0}}"#;
+const COLOR_JQ: &str = "\x1b[1;39m{\x1b[0m\x1b[1;34m\"a\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m[\x1b[0m\x1b[0;39m1\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;90mnull\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;32m\"s\"\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;39mtrue\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;39mfalse\x1b[0m\x1b[1;39m]\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"b\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m{}\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"c\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m[]\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"d\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m{\x1b[0m\x1b[1;34m\"e\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[0;39m0\x1b[0m\x1b[1;39m}\x1b[0m\x1b[1;39m}\x1b[0m";
+
+#[test]
+fn fmt_colors_like_jq() {
+    // jqc adds one newline after the text, as jq does after its output.
+    jqc_default_colors()
+        .args(["-C", "fmt"])
+        .write_stdin(COLOR_INPUT)
+        .assert()
+        .success()
+        .stdout(format!("{COLOR_JQ}\n"));
+}
+
+#[test]
+fn edit_colors_like_jq() {
+    jqc_default_colors()
+        .args(["--edit", "-C", "."])
+        .write_stdin(COLOR_INPUT)
+        .assert()
+        .success()
+        .stdout(format!("{COLOR_JQ}\n"));
+}
+
+#[test]
+fn fmt_uses_jq_colors() {
+    // `JQ_COLORS=':::::4;36:7;37:1;31' jq -C -c .` (jq 1.8.2) on the same input.
+    let expected = "\x1b[7;37m{\x1b[0m\x1b[1;31m\"a\"\x1b[0m\x1b[7;37m:\x1b[0m\x1b[4;36m[\x1b[0m\x1b[m1\x1b[0m\x1b[4;36m,\x1b[0m\x1b[7;37m{}\x1b[0m\x1b[4;36m]\x1b[0m\x1b[7;37m}\x1b[0m";
+    jqc_default_colors()
+        .env("JQ_COLORS", ":::::4;36:7;37:1;31")
+        .args(["-C", "fmt"])
+        .write_stdin(r#"{"a":[1,{}]}"#)
+        .assert()
+        .success()
+        .stdout(format!("{expected}\n"));
+}
+
+#[test]
+fn jq_colors_ninth_field_colors_comments() {
+    jqc_default_colors()
+        .env("JQ_COLORS", "0;90:0;39:0;39:0;39:0;32:1;39:1;39:1;34:3;36")
+        .args(["-C", "fmt"])
+        .write_stdin("[1] // c")
+        .assert()
+        .success()
+        .stdout(contains("\x1b[3;36m// c\x1b[0m"));
+}
+
+#[test]
+fn fmt_warns_about_bad_jq_colors_once() {
+    for color in ["-C", "-M"] {
+        jqc_default_colors()
+            .env("JQ_COLORS", "red")
+            .args([color, "fmt"])
+            .write_stdin(r#"{"a":1}"#)
+            .assert()
+            .success()
+            .stderr("Failed to set $JQ_COLORS\n");
+    }
+}
+
+#[test]
+fn edit_warns_about_bad_jq_colors_once() {
+    // jq warns, in the run of the user's filter only.
+    jqc_default_colors()
+        .env("JQ_COLORS", "red")
+        .args(["--edit", ".a = 2"])
+        .write_stdin(r#"{"a":1}"#)
+        .assert()
+        .success()
+        .stdout("{\"a\":2}\n")
+        .stderr("Failed to set $JQ_COLORS\n");
+}
+
+#[test]
+fn edit_filter_sees_jq_colors() {
+    jqc_default_colors()
+        .env("JQ_COLORS", "0;31")
+        .args(["--edit", ".a = $ENV.JQ_COLORS"])
+        .write_stdin(r#"{"a":1}"#)
+        .assert()
+        .success()
+        .stdout("{\"a\":\"0;31\"}\n");
+}
+
+#[cfg(unix)]
+#[test]
+fn jq_colors_non_utf8_bytes_like_jq() {
+    use std::ffi::OsStr;
+    use std::os::unix::ffi::OsStrExt;
+    // jq ignores what follows its 8th field, bytes included.
+    jqc_default_colors()
+        .env("JQ_COLORS", OsStr::from_bytes(b"1:1:1:1:1:1:1:1\xff"))
+        .args(["-C", "fmt"])
+        .write_stdin("{}")
+        .assert()
+        .success()
+        .stdout("\x1b[1m{}\x1b[0m\n")
+        .stderr("");
+    // In an earlier field it is invalid, as in jq.
+    jqc_default_colors()
+        .env("JQ_COLORS", OsStr::from_bytes(b"1\xff"))
+        .args(["-M", "fmt"])
+        .write_stdin("{}")
+        .assert()
+        .success()
+        .stderr("Failed to set $JQ_COLORS\n");
+}
+
+#[test]
+fn fmt_dash_reads_stdin() {
+    for args in [&["fmt", "-"][..], &["fmt", "--", "-"][..]] {
+        jqc()
+            .args(args)
+            .write_stdin("{\"a\": 1} // c")
+            .assert()
+            .success()
+            .stdout("{\"a\": 1} // c\n");
+    }
+}
+
+#[test]
+fn fmt_in_place_dash_is_an_error() {
+    jqc()
+        .args(["fmt", "--in-place", "-"])
+        .write_stdin("{}")
+        .assert()
+        .code(2)
+        .stderr(contains("--in-place requires a file argument"));
+}
+
+#[test]
+fn fmt_reads_a_file_named_dash_as_dot_slash_dash() {
+    let dir = tempfile::tempdir().unwrap();
+    fs::write(dir.path().join("-"), "[1] // c").unwrap();
+    jqc()
+        .current_dir(dir.path())
+        .args(["fmt", "./-"])
+        .write_stdin("")
+        .assert()
+        .success()
+        .stdout("[1] // c\n");
+}
+
+#[test]
+fn fmt_and_edit_keep_a_final_newline_single() {
+    // The file's own final newline ends the output; no blank line follows.
+    jqc()
+        .args(["fmt"])
+        .write_stdin("{\"a\": 1} // c\n")
+        .assert()
+        .success()
+        .stdout("{\"a\": 1} // c\n");
+    jqc()
+        .args(["--edit", ".a = 2"])
+        .write_stdin("{\"a\": 1} // c\n")
+        .assert()
+        .success()
+        .stdout("{\"a\": 2} // c\n");
+    jqc_default_colors()
+        .args(["-C", "fmt"])
+        .write_stdin("[]\n")
+        .assert()
+        .success()
+        .stdout("\x1b[1;39m[]\x1b[0m\n");
+}

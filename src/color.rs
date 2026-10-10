@@ -1,17 +1,30 @@
-/// ANSI color codes for JSONC token types.
-/// Configurable via JQC_COLORS environment variable (colon-separated, 9 fields).
+use jsonc_parser::tokens::Token;
+use jsonc_parser::{Scanner, ScannerOptions};
+
+/// jq 1.8.2's default colors, in `JQ_COLORS` order, then jqc's comment color.
 /// Index: [0] null, [1] false, [2] true, [3] numbers, [4] strings, [5] arrays, [6] objects, [7] object-keys, [8] comments
 const DEFAULT_COLORS: [&str; 9] = [
-    "1;30", // null         — bold dark gray
-    "0;39", // false        — default
-    "0;39", // true         — default
-    "0;39", // numbers      — default
-    "0;32", // strings      — green
-    "1;39", // arrays       — bold
-    "1;39", // objects      — bold
-    "34",   // object-keys  — blue
-    "0;90", // comments     — dark gray (jqc-specific; jq has no comments)
+    "0;90", // null
+    "0;39", // false
+    "0;39", // true
+    "0;39", // numbers
+    "0;32", // strings
+    "1;39", // arrays
+    "1;39", // objects
+    "1;34", // object keys
+    "3;90", // comments — italic dark gray (jqc's own; jq has no comments)
 ];
+
+/// The colors jq reads from `JQ_COLORS`; jqc reads one more for comments.
+const JQ_FIELDS: usize = 8;
+
+/// The leading run of `0123456789;`, which is all jq takes as a color.
+fn color_codes(s: &str) -> &str {
+    &s[..s
+        .bytes()
+        .take_while(|b| b.is_ascii_digit() || *b == b';')
+        .count()]
+}
 
 /// JSON/JSONC token kinds used to look up colors from the palette.
 pub enum TokenKind {
@@ -26,7 +39,7 @@ pub enum TokenKind {
     Comment,
 }
 
-/// Resolved palette after applying `JQC_COLORS` overrides.
+/// The colors for each token kind, from `JQ_COLORS` or the defaults.
 pub struct Palette {
     null: String,
     bool_false: String,
@@ -56,19 +69,49 @@ impl Default for Palette {
 }
 
 impl Palette {
-    /// Parse `JQC_COLORS` environment variable and override defaults.
-    /// Format: "null:false:true:number:string:array:object:key:comment" (ANSI partial escapes, 9 fields)
-    pub fn from_env() -> Self {
-        match std::env::var("JQC_COLORS") {
-            Ok(val) => Self::from_jqc_colors(&val),
-            Err(_) => Self::default(),
+    /// The palette from `JQ_COLORS`, and whether jq would reject it (jq then
+    /// warns and uses its defaults).
+    pub fn from_env() -> (Palette, bool) {
+        match std::env::var_os("JQ_COLORS") {
+            None => (Palette::default(), false),
+            // jq reads bytes and stops after its 8th field, so a non-UTF-8
+            // byte only matters where jq would reject it anyway.
+            Some(value) => match Palette::parse(&value.to_string_lossy()) {
+                Some(palette) => (palette, false),
+                None => (Palette::default(), true),
+            },
         }
     }
 
-    /// Parse a `JQC_COLORS`-formatted string (colon-separated, 9 fields).
-    fn from_jqc_colors(s: &str) -> Self {
+    /// `JQ_COLORS` read as jq 1.8.2 reads it (`jq_set_colors` in
+    /// src/jv_print.c), plus jqc's 9th field for comments. `None` when jq
+    /// would reject it.
+    pub fn parse(s: &str) -> Option<Palette> {
+        let mut fields = Vec::new();
+        let mut rest = s;
+        loop {
+            let field = color_codes(rest);
+            fields.push(field);
+            rest = &rest[field.len()..];
+            // jq doesn't look past its 8th field.
+            if rest.is_empty() || fields.len() == JQ_FIELDS {
+                break;
+            }
+            rest = rest.strip_prefix(':')?;
+        }
+        // jq never reads the comment field, so it never makes the value invalid.
+        let comment = match rest.strip_prefix(':') {
+            Some(after) if fields.len() == JQ_FIELDS => {
+                Some(color_codes(after)).filter(|c| !c.is_empty())
+            }
+            _ => None,
+        };
+        // jq doesn't count an empty last field ("" and "0;31:").
+        if fields.last() == Some(&"") {
+            fields.pop();
+        }
         let mut p = Palette::default();
-        let fields: [&mut String; 9] = [
+        let slots = [
             &mut p.null,
             &mut p.bool_false,
             &mut p.bool_true,
@@ -77,14 +120,14 @@ impl Palette {
             &mut p.array,
             &mut p.object,
             &mut p.key,
-            &mut p.comment,
         ];
-        for (field, part) in fields.into_iter().zip(s.split(':')) {
-            if !part.is_empty() {
-                *field = part.to_string();
-            }
+        for (slot, field) in slots.into_iter().zip(fields) {
+            *slot = field.to_string();
         }
-        p
+        if let Some(comment) = comment {
+            p.comment = comment.to_string();
+        }
+        Some(p)
     }
 
     /// Apply ANSI color for the given token kind. Single source of truth for all colorization.
@@ -104,168 +147,117 @@ impl Palette {
     }
 }
 
-/// Tracks whether the next string token is an object key or a value.
-enum Ctx {
-    ObjKey,
-    ObjVal,
-    Arr,
+/// An open container while coloring, and for an object whether a key
+/// comes next.
+struct Frame {
+    object: bool,
+    key_next: bool,
 }
 
-/// Scans a `// …` line comment; advances `i` past the last character before `\n`.
-fn scan_line_comment<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
-    let start = *i;
-    while *i < bytes.len() && bytes[*i] != b'\n' {
-        *i += 1;
+/// After a value, an object expects a key next, with or without a comma
+/// (jsonc-parser accepts a missing one).
+fn value_done(stack: &mut [Frame]) {
+    if let Some(frame) = stack.last_mut() {
+        frame.key_next = frame.object;
     }
-    &text[start..*i]
 }
 
-/// Scans a `/* … */` block comment; advances `i` past the closing `*/`.
-fn scan_block_comment<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
-    let start = *i;
-    *i += 2;
-    while *i + 1 < bytes.len() && !(bytes[*i] == b'*' && bytes[*i + 1] == b'/') {
-        *i += 1;
-    }
-    if *i + 1 < bytes.len() {
-        *i += 2; // consume */
-    }
-    &text[start..*i]
-}
-
-/// Scans a `"…"` string literal (with escape handling); advances `i` past the closing `"`.
-fn scan_string<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
-    let start = *i;
-    *i += 1;
-    while *i < bytes.len() {
-        if bytes[*i] == b'\\' {
-            *i += 2; // skip escape sequence
-            continue;
-        }
-        if bytes[*i] == b'"' {
-            *i += 1;
-            break;
-        }
-        *i += 1;
-    }
-    &text[start..*i]
-}
-
-/// Scans a number (`-` or digit prefix); advances `i` past the last numeric character.
-fn scan_number<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
-    let start = *i;
-    *i += 1;
-    while *i < bytes.len() && matches!(bytes[*i], b'0'..=b'9' | b'.' | b'e' | b'E' | b'+' | b'-') {
-        *i += 1;
-    }
-    &text[start..*i]
-}
-
-/// Scans an alphabetic keyword (`true` / `false` / `null`); advances `i` past the word.
-fn scan_keyword<'a>(bytes: &[u8], text: &'a str, i: &mut usize) -> &'a str {
-    let start = *i;
-    while *i < bytes.len() && bytes[*i].is_ascii_alphabetic() {
-        *i += 1;
-    }
-    &text[start..*i]
-}
-
-/// Colorize raw JSONC source text with ANSI codes, preserving comments and whitespace.
-///
-/// Tokenizes byte-by-byte. Safe for UTF-8 because all JSONC structural bytes are ASCII,
-/// and multi-byte UTF-8 sequences never share byte values with ASCII.
+/// Colorize JSONC source text the way `jq -C` colors JSON, keeping
+/// comments and whitespace. The tokens come from jsonc-parser's scanner, so
+/// everything `fmt` accepts (single quotes, unquoted keys, hex numbers) is
+/// colored by what it is; the text between tokens is copied as it is.
 pub fn colorize_jsonc(text: &str, palette: &Palette) -> String {
-    let bytes = text.as_bytes();
-    let len = bytes.len();
-    let mut out = String::with_capacity(len * 2);
-    let mut i = 0;
-    // Stack tracks nesting context to distinguish object keys from string values.
-    let mut stack: Vec<Ctx> = Vec::new();
-
-    while i < len {
-        match bytes[i] {
-            // Whitespace — pass through unchanged (preserves original indentation)
-            b' ' | b'\t' | b'\n' | b'\r' => {
-                out.push(bytes[i] as char);
-                i += 1;
-            }
-            // Line comment: // … \n
-            b'/' if i + 1 < len && bytes[i + 1] == b'/' => {
-                let token = scan_line_comment(bytes, text, &mut i);
-                out.push_str(&palette.paint_token(TokenKind::Comment, token));
-            }
-            // Block comment: /* … */
-            b'/' if i + 1 < len && bytes[i + 1] == b'*' => {
-                let token = scan_block_comment(bytes, text, &mut i);
-                out.push_str(&palette.paint_token(TokenKind::Comment, token));
-            }
-            // String literal
-            b'"' => {
-                let token = scan_string(bytes, text, &mut i);
-                // Paint as key when the current object context expects a key; otherwise as string.
-                match stack.last() {
-                    Some(Ctx::ObjKey) => {
-                        out.push_str(&palette.paint_token(TokenKind::ObjectKey, token));
-                        *stack.last_mut().unwrap() = Ctx::ObjVal;
-                    }
-                    _ => out.push_str(&palette.paint_token(TokenKind::StringValue, token)),
+    let mut out = String::with_capacity(text.len() * 2);
+    let mut scanner = Scanner::new(text, &ScannerOptions::default());
+    let mut stack: Vec<Frame> = Vec::new();
+    let mut copied = 0;
+    // fmt and --edit check the text first; after a scan error, the rest is
+    // copied uncolored.
+    while let Ok(Some(token)) = scanner.scan() {
+        let start = scanner.token_start();
+        let mut end = scanner.token_end();
+        out.push_str(&text[copied..start]);
+        let key = stack.last().is_some_and(|f| f.object && f.key_next);
+        let kind = match token {
+            Token::CommentLine(_) | Token::CommentBlock(_) => Some(TokenKind::Comment),
+            Token::OpenBrace | Token::OpenBracket => {
+                let object = token == Token::OpenBrace;
+                let close = if object { b'}' } else { b']' };
+                if text.as_bytes().get(end) == Some(&close) {
+                    // jq prints an empty container as one token.
+                    let _ = scanner.scan();
+                    end = scanner.token_end();
+                    value_done(&mut stack);
+                } else {
+                    stack.push(Frame {
+                        object,
+                        key_next: object,
+                    });
                 }
+                Some(if object {
+                    TokenKind::ObjectBrace
+                } else {
+                    TokenKind::ArrayBracket
+                })
             }
-            // Number: starts with '-' or a digit
-            b'-' | b'0'..=b'9' => {
-                let token = scan_number(bytes, text, &mut i);
-                out.push_str(&palette.paint_token(TokenKind::Number, token));
-            }
-            // Keywords: true / false / null
-            b'a'..=b'z' | b'A'..=b'Z' => {
-                let token = scan_keyword(bytes, text, &mut i);
-                out.push_str(&match token {
-                    "null" => palette.paint_token(TokenKind::Null, token),
-                    "false" => palette.paint_token(TokenKind::BoolFalse, token),
-                    "true" => palette.paint_token(TokenKind::BoolTrue, token),
-                    _ => token.to_string(),
-                });
-            }
-            // Structural characters
-            b'{' => {
-                out.push_str(&palette.paint_token(TokenKind::ObjectBrace, "{"));
-                stack.push(Ctx::ObjKey);
-                i += 1;
-            }
-            b'}' => {
-                out.push_str(&palette.paint_token(TokenKind::ObjectBrace, "}"));
+            Token::CloseBrace | Token::CloseBracket => {
                 stack.pop();
-                i += 1;
+                value_done(&mut stack);
+                Some(if token == Token::CloseBrace {
+                    TokenKind::ObjectBrace
+                } else {
+                    TokenKind::ArrayBracket
+                })
             }
-            b'[' => {
-                out.push_str(&palette.paint_token(TokenKind::ArrayBracket, "["));
-                stack.push(Ctx::Arr);
-                i += 1;
-            }
-            b']' => {
-                out.push_str(&palette.paint_token(TokenKind::ArrayBracket, "]"));
-                stack.pop();
-                i += 1;
-            }
-            b':' => {
-                out.push(':');
-                i += 1;
-            }
-            b',' => {
-                out.push(',');
-                // After ',' inside an object, the next string is a key again.
-                if let Some(Ctx::ObjVal) = stack.last() {
-                    *stack.last_mut().unwrap() = Ctx::ObjKey;
+            // As in jq, `:` takes the object's color and `,` its container's.
+            Token::Colon => Some(TokenKind::ObjectBrace),
+            Token::Comma => stack.last_mut().map(|frame| {
+                frame.key_next = frame.object;
+                if frame.object {
+                    TokenKind::ObjectBrace
+                } else {
+                    TokenKind::ArrayBracket
                 }
-                i += 1;
+            }),
+            _ if key => {
+                if let Some(frame) = stack.last_mut() {
+                    frame.key_next = false;
+                }
+                Some(TokenKind::ObjectKey)
             }
-            _ => {
-                out.push(bytes[i] as char);
-                i += 1;
+            Token::String(_) => {
+                value_done(&mut stack);
+                Some(TokenKind::StringValue)
             }
+            Token::Number(_) => {
+                value_done(&mut stack);
+                Some(TokenKind::Number)
+            }
+            Token::Boolean(true) => {
+                value_done(&mut stack);
+                Some(TokenKind::BoolTrue)
+            }
+            Token::Boolean(false) => {
+                value_done(&mut stack);
+                Some(TokenKind::BoolFalse)
+            }
+            Token::Null => {
+                value_done(&mut stack);
+                Some(TokenKind::Null)
+            }
+            Token::Word(_) => {
+                value_done(&mut stack);
+                None
+            }
+        };
+        let raw = &text[start..end];
+        match kind {
+            Some(kind) => out.push_str(&palette.paint_token(kind, raw)),
+            None => out.push_str(raw),
         }
+        copied = end;
     }
-
+    out.push_str(&text[copied..]);
     out
 }
 
@@ -316,26 +308,69 @@ mod tests {
         assert!(out.contains("2"), "got: {out}");
     }
 
+    fn parsed(s: &str) -> Palette {
+        Palette::parse(s).unwrap_or_else(|| panic!("{s:?} should be accepted"))
+    }
+
     #[test]
-    fn test_jqc_colors_override() {
-        let p = Palette::from_jqc_colors("0;31::::::::");
+    fn test_parse_fields_in_jq_order() {
+        let p = parsed("0;31:0;32:0;33:0;34:0;35:0;36:0;37:1;31:3;36");
+        assert_eq!(
+            [&p.null, &p.bool_false, &p.bool_true, &p.number, &p.string],
+            ["0;31", "0;32", "0;33", "0;34", "0;35"]
+        );
+        assert_eq!([&p.array, &p.object, &p.key], ["0;36", "0;37", "1;31"]);
+        assert_eq!(p.comment, "3;36");
+    }
+
+    #[test]
+    fn test_parse_missing_and_empty_fields_like_jq() {
+        // Missing fields and an empty last field keep the defaults.
+        let p = parsed("0;31:");
         assert_eq!(p.null, "0;31");
-        assert_eq!(p.string, DEFAULT_COLORS[4]);
+        assert_eq!(p.bool_false, DEFAULT_COLORS[1]);
+        let p = parsed("");
+        assert_eq!(p.null, DEFAULT_COLORS[0]);
+        // Any other empty field means no color.
+        assert_eq!(parsed(":").null, "");
+        let p = parsed("::::0;35");
+        assert_eq!(
+            [&p.null, &p.bool_false, &p.bool_true, &p.number],
+            ["", "", "", ""]
+        );
+        assert_eq!(p.string, "0;35");
+        assert_eq!(p.array, DEFAULT_COLORS[5]);
+        // Fewer than 8 fields: no comment field.
+        assert_eq!(parsed("0;31:0;32").comment, DEFAULT_COLORS[8]);
     }
 
     #[test]
-    fn test_jqc_colors_partial() {
-        let p = Palette::from_jqc_colors("::::0;33::::");
-        assert_eq!(p.string, "0;33");
-        assert_eq!(p.null, DEFAULT_COLORS[0]);
+    fn test_parse_stops_after_the_eighth_field_like_jq() {
+        // jq doesn't look past its 8th field's codes.
+        let p = parsed("1:1:1:1:1:1:1:1;3x4");
+        assert_eq!(p.key, "1;3");
+        assert_eq!(p.comment, DEFAULT_COLORS[8]);
+        // An empty 8th field is jq's empty last field, even before a 9th.
+        let p = parsed("1:1:1:1:1:1:1::3;90");
+        assert_eq!(p.object, "1");
+        assert_eq!(p.key, DEFAULT_COLORS[7]);
+        assert_eq!(p.comment, "3;90");
+        // The 9th field is jqc's own: never rejected, cut at a bad character.
+        assert_eq!(parsed("1:1:1:1:1:1:1:1;34:3;36x").comment, "3;36");
+        assert_eq!(parsed("1:1:1:1:1:1:1:1;34:x").comment, DEFAULT_COLORS[8]);
+        // Eight empty fields, then a comment color.
+        let p = parsed("::::::::3;36");
+        assert_eq!(p.object, "");
+        assert_eq!(p.key, DEFAULT_COLORS[7]);
+        assert_eq!(p.comment, "3;36");
     }
 
     #[test]
-    fn test_jqc_colors_comment() {
-        // 9th field overrides comment color
-        let p = Palette::from_jqc_colors("::::::::0;31");
-        assert_eq!(p.comment, "0;31");
-        assert_eq!(p.null, DEFAULT_COLORS[0]);
+    fn test_parse_rejects_what_jq_rejects() {
+        assert!(Palette::parse("red").is_none());
+        assert!(Palette::parse("1:x:1").is_none());
+        assert!(Palette::parse("0;31 ").is_none());
+        assert!(Palette::parse("1:1:1:1:1:1:1x").is_none());
     }
 
     #[test]
@@ -357,7 +392,7 @@ mod tests {
     fn test_colorize_jsonc_key_differs_from_string_value() {
         let p = Palette::default();
         let out = colorize_jsonc(r#"{"host": "localhost"}"#, &p);
-        // key uses DEFAULT_COLORS[7] (blue=34), value uses DEFAULT_COLORS[4] (green=0;32)
+        // key uses DEFAULT_COLORS[7], value uses DEFAULT_COLORS[4]
         let key_colored = format!("\x1b[{}m\"host\"\x1b[0m", DEFAULT_COLORS[7]);
         let val_colored = format!("\x1b[{}m\"localhost\"\x1b[0m", DEFAULT_COLORS[4]);
         assert!(out.contains(&key_colored), "key color missing: {out}");
@@ -374,5 +409,81 @@ mod tests {
         let out = colorize_jsonc(input, &p);
         assert!(out.contains('\n'), "newlines lost");
         assert!(out.contains("  "), "indentation lost");
+    }
+
+    fn paint(code: &str, text: &str) -> String {
+        format!("\x1b[{code}m{text}\x1b[0m")
+    }
+
+    #[test]
+    fn test_colorize_matches_jq_compact_output() {
+        // `jq -C -c .` (jq 1.8.2, JQ_COLORS unset) on the same input.
+        let input = r#"{"a":[1,null,"s",true,false],"b":{},"c":[],"d":{"e":0}}"#;
+        let expected = "\x1b[1;39m{\x1b[0m\x1b[1;34m\"a\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m[\x1b[0m\x1b[0;39m1\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;90mnull\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;32m\"s\"\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;39mtrue\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;39mfalse\x1b[0m\x1b[1;39m]\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"b\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m{}\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"c\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m[]\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"d\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m{\x1b[0m\x1b[1;34m\"e\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[0;39m0\x1b[0m\x1b[1;39m}\x1b[0m\x1b[1;39m}\x1b[0m";
+        assert_eq!(colorize_jsonc(input, &Palette::default()), expected);
+    }
+
+    #[test]
+    fn test_colorize_separators_take_their_container_color() {
+        // `JQ_COLORS=':::::4;36:7;37:1;31' jq -C -c .` (jq 1.8.2) on the same input:
+        // fields 1-5 are empty, so numbers are `\x1b[m`.
+        let p = Palette {
+            number: String::new(),
+            array: "4;36".into(),
+            object: "7;37".into(),
+            key: "1;31".into(),
+            ..Palette::default()
+        };
+        let expected = "\x1b[7;37m{\x1b[0m\x1b[1;31m\"a\"\x1b[0m\x1b[7;37m:\x1b[0m\x1b[4;36m[\x1b[0m\x1b[m1\x1b[0m\x1b[4;36m,\x1b[0m\x1b[7;37m{}\x1b[0m\x1b[4;36m]\x1b[0m\x1b[7;37m}\x1b[0m";
+        assert_eq!(colorize_jsonc(r#"{"a":[1,{}]}"#, &p), expected);
+    }
+
+    #[test]
+    fn test_colorize_keeps_whitespace_and_comments() {
+        let p = Palette::default();
+        let input = "{\n  // c\n  \"a\": [ ], /* b */\n}";
+        let expected = format!(
+            "{}\n  {}\n  {}{} {} {}{} {}\n{}",
+            paint("1;39", "{"),
+            paint("3;90", "// c"),
+            paint("1;34", "\"a\""),
+            paint("1;39", ":"),
+            paint("1;39", "["),
+            paint("1;39", "]"),
+            paint("1;39", ","),
+            paint("3;90", "/* b */"),
+            paint("1;39", "}"),
+        );
+        assert_eq!(colorize_jsonc(input, &p), expected);
+    }
+
+    #[test]
+    fn test_colorize_loose_jsonc() {
+        let p = Palette::default();
+        // Unquoted, number and literal keys; single quotes; hex.
+        let out = colorize_jsonc("{foo: 'bar', 1: true, null: 0x1F}", &p);
+        assert!(out.contains(&paint("1;34", "foo")), "{out}");
+        assert!(out.contains(&paint("0;32", "'bar'")), "{out}");
+        assert!(out.contains(&paint("1;34", "1")), "{out}");
+        assert!(out.contains(&paint("0;39", "true")), "{out}");
+        assert!(out.contains(&paint("1;34", "null")), "{out}");
+        assert!(out.contains(&paint("0;39", "0x1F")), "{out}");
+        // `//` inside a single-quoted string is part of the string.
+        let out = colorize_jsonc("{'k': 'v // x'}", &p);
+        assert!(out.contains(&paint("0;32", "'v // x'")), "{out}");
+        // A missing comma still starts the next key.
+        let out = colorize_jsonc(r#"{"a":1 "b":"c"}"#, &p);
+        assert!(out.contains(&paint("1;34", "\"b\"")), "{out}");
+        assert!(out.contains(&paint("0;32", "\"c\"")), "{out}");
+        // The key after a nested container, and a key after a comment.
+        let out = colorize_jsonc("{\"a\":{\"b\":1},/*c*/\"d\":2}", &p);
+        assert!(out.contains(&paint("1;34", "\"d\"")), "{out}");
+    }
+
+    #[test]
+    fn test_colorize_keeps_non_ascii_text() {
+        let out = colorize_jsonc("{日本: \"語\"}", &Palette::default());
+        assert!(out.contains(&paint("1;34", "日本")), "{out}");
+        assert!(out.contains(&paint("0;32", "\"語\"")), "{out}");
     }
 }
