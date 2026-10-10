@@ -1,5 +1,29 @@
 # Changelog
 
+## [1.0.0](https://github.com/muleyuck/jqc/compare/v0.2.0...v1.0.0) (2026-10-10)
+
+
+### ⚠ BREAKING CHANGES
+
+* JQC_COLORS is no longer read; set the comment color as JQ_COLORS's 9th field.
+* edit expressions are no longer detected from the filter; use --edit or --in-place. -c and other output-format options are errors in edit mode.
+* jq must be installed and on PATH for filters. jqc's own options are long-only: use --in-place instead of -i. Filter output and its colors come from jq (JQ_COLORS); JQC_COLORS only applies to fmt and edit output.
+
+### Features
+
+* color fmt and edit output like jq, and rewrite the README ([#86](https://github.com/muleyuck/jqc/issues/86)) ([dd0f224](https://github.com/muleyuck/jqc/commit/dd0f2243d725f0158faec3e6c501fd7f6b05587b))
+* edit with --edit / --in-place, computed by jq ([#85](https://github.com/muleyuck/jqc/issues/85)) ([1499509](https://github.com/muleyuck/jqc/commit/14995092b11c4b55d6e6d37406f26e27066f147e))
+* run filters with the installed jq ([#82](https://github.com/muleyuck/jqc/issues/82)) ([b70ce70](https://github.com/muleyuck/jqc/commit/b70ce70117c893de3edb047b153311209874adbb))
+
+
+### Bug Fixes
+
+* handle numbers like jq ([#80](https://github.com/muleyuck/jqc/issues/80)) ([9f02d67](https://github.com/muleyuck/jqc/commit/9f02d67ab23014832b854201b55de16c9ffe54b6))
+* keep object key order like jq ([#69](https://github.com/muleyuck/jqc/issues/69)) ([0fb6ba5](https://github.com/muleyuck/jqc/commit/0fb6ba5575c86e16798aaa41496b9e470ae63ee3)), closes [#39](https://github.com/muleyuck/jqc/issues/39)
+* match jq when editing objects with duplicate keys ([#37](https://github.com/muleyuck/jqc/issues/37)) ([5bb877a](https://github.com/muleyuck/jqc/commit/5bb877a3be32377f7490e1e53186a15ed6316307)), closes [#17](https://github.com/muleyuck/jqc/issues/17)
+* pretty-print non-string values under -r like jq ([#71](https://github.com/muleyuck/jqc/issues/71)) ([890ad79](https://github.com/muleyuck/jqc/commit/890ad794be92f61416881ff59d9282bcfd087622)), closes [#40](https://github.com/muleyuck/jqc/issues/40)
+* print nan as null and infinite as the largest double like jq ([#74](https://github.com/muleyuck/jqc/issues/74)) ([8ead885](https://github.com/muleyuck/jqc/commit/8ead8855aa9e1c793e59a19c4c952b2d26ca475c)), closes [#41](https://github.com/muleyuck/jqc/issues/41)
+
 ## [0.2.0](https://github.com/muleyuck/jqc/compare/v0.1.0...v0.2.0) (2026-07-17)
 
 
