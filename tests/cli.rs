@@ -1737,3 +1737,36 @@ fn seq_keeps_values_before_a_broken_one() {
         .success()
         .stdout("\x1e{\"a\":1}\n\x1e2\n");
 }
+
+/// jqc with jq's default colors: a developer's own JQ_COLORS or NO_COLOR
+/// must not change the colored output the tests expect.
+fn jqc_default_colors() -> Command {
+    let mut cmd = jqc();
+    cmd.env_remove("JQ_COLORS").env_remove("NO_COLOR");
+    cmd
+}
+
+/// `jq -C -c .` (jq 1.8.2, JQ_COLORS unset) on `COLOR_INPUT`.
+const COLOR_INPUT: &str = r#"{"a":[1,null,"s",true,false],"b":{},"c":[],"d":{"e":0}}"#;
+const COLOR_JQ: &str = "\x1b[1;39m{\x1b[0m\x1b[1;34m\"a\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m[\x1b[0m\x1b[0;39m1\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;90mnull\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;32m\"s\"\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;39mtrue\x1b[0m\x1b[1;39m,\x1b[0m\x1b[0;39mfalse\x1b[0m\x1b[1;39m]\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"b\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m{}\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"c\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m[]\x1b[0m\x1b[1;39m,\x1b[0m\x1b[1;34m\"d\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[1;39m{\x1b[0m\x1b[1;34m\"e\"\x1b[0m\x1b[1;39m:\x1b[0m\x1b[0;39m0\x1b[0m\x1b[1;39m}\x1b[0m\x1b[1;39m}\x1b[0m";
+
+#[test]
+fn fmt_colors_like_jq() {
+    // jqc adds one newline after the text, as jq does after its output.
+    jqc_default_colors()
+        .args(["-C", "fmt"])
+        .write_stdin(COLOR_INPUT)
+        .assert()
+        .success()
+        .stdout(format!("{COLOR_JQ}\n"));
+}
+
+#[test]
+fn edit_colors_like_jq() {
+    jqc_default_colors()
+        .args(["--edit", "-C", "."])
+        .write_stdin(COLOR_INPUT)
+        .assert()
+        .success()
+        .stdout(format!("{COLOR_JQ}\n"));
+}
