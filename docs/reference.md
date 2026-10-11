@@ -63,7 +63,7 @@ $ echo '{"a": }' | jqc fmt
 Error: Failed to parse JSONC: Unexpected close brace on line 1 column 7
 ```
 
-`-` reads standard input. `--in-place` needs a file; it validates the file and writes the same content back. `-C` and `-M` work as in jq and may come before `fmt` (`jqc -C fmt`).
+`-` reads standard input. `--in-place` needs a file; it validates the file and writes the same content back. `-C` and `-M` may come before `fmt` (`jqc -C fmt`); if both are given, the last one wins (see Differences from jq).
 
 ## Edit
 
@@ -115,7 +115,7 @@ Error: -c cannot be used with --edit: edits keep the file's own format
 
 ## Colors
 
-Whether to color is decided as in jq: on for a terminal, `-C` to force, `-M` or `NO_COLOR` to disable.
+Whether to color is decided as in jq: on for a terminal, `-C` to force, `-M` or `NO_COLOR` to disable. In filter mode jq decides; for `fmt` and `--edit`, jqc does, and when both `-C` and `-M` are given the last one wins.
 
 Colors come from `JQ_COLORS`, with the same rules as jq. jqc adds a 9th field for comments (default `3;90`). jq ignores the 9th field, so you can share one value with jq:
 
@@ -150,6 +150,7 @@ jqc converts the input before jq sees it, so some behavior differs from jq.
 - With `--stream`, events come from the document after duplicate keys are merged. With `--stream` and `--stream-errors`, no events are printed from inside a broken value.
 - With `--seq`: JSONC reads NBSP and form feed as whitespace (jq does not). A record that holds a comment and spans files is skipped. An unclosed block comment after a value gets no jq warning. The position in a jq warning points into the converted text. A record that holds only a comment prints nothing (jq warns).
 - For broken input, jq's `Unmatched ']'` message is printed above the jqc message. The jqc message has the real position and reason.
+- For `fmt` and `--edit`, when both `-C` and `-M` are given, the last one wins; jq lets `-M` win.
 - Arguments must be UTF-8.
 - Edit: NaN in the edited document becomes null, as in jq's output. Writing the string `"\u0000jqc:NaN"` over a NaN is ignored. A computed value equal to the largest double leaves `Infinity` in place (`.a = infinite`), because jq prints it as `1.7976931348623157e+308`, the same value; a literal `.a = 1.7976931348623157e+308` does replace it.
 - Edit: deleting, adding or retyping thousands of elements in one container is slow, and the time grows faster than the container (about 2 seconds to retype 4,000 array elements, about 6 seconds to append 4,000 elements to a 4,000-element array). Changing values of the same kind (numbers to numbers, strings to strings) is fast.
