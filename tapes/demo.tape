@@ -5,8 +5,8 @@ Set Shell zsh
 Set TypingSpeed 40ms
 
 Set FontSize 28
-Set Width 1600
-Set Height 1250
+Set Width 2200
+Set Height 800
 
 Hide
 Type `exec env -u JQ_COLORS -u NO_COLOR PATH="$PWD/target/debug:$PATH" zsh -f` Enter
