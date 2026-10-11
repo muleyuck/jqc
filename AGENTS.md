@@ -1,6 +1,6 @@
 # AGENTS.md
 
-jqc reads JSONC. Everything else is jq: jqc converts JSONC to JSON and runs the `jq` on `PATH`. It never computes jq results itself. User-facing behavior is in README.md.
+jqc reads JSONC. Everything else is jq: jqc converts JSONC to JSON and runs the `jq` on `PATH`. It never computes jq results itself. User-facing behavior is in README.md and docs/reference.md.
 
 ## Commands
 
@@ -35,7 +35,7 @@ cargo build && PATH="$PWD/target/debug:$PATH" bash scripts/jq-compat.sh   # jqc 
 - **Broken input**: jqc feeds the values before the error, then a `]` that jq always rejects. That way jq decides whether the error is reached, and jqc prints its parse message only when jq exits 5.
 - **Edit mode**, for each document: `jsonc::convert` → jq canonicalizes the source (`CANONICALIZE` in `edit_document`; NaN becomes a marker string) → jq runs the user's filter with `-c -M` → `patch::write_back(text, source, result)`. Input and result must be exactly one value each. A failure writes nothing.
 - **Colors**: in filter mode jq colors its own output. `fmt` and `--edit` must stay byte-identical to `jq -C` for the same tokens. `color.rs`'s tests and `tests/cli.rs` check this against jq 1.8.2's output.
-- **Differences from jq** are listed in README.md ("Differences from jq") and in `tests/fixtures/jq-compat/cases.json`. A change that adds or removes a difference updates both.
+- **Differences from jq** are listed in docs/reference.md ("Differences from jq") and in `tests/fixtures/jq-compat/cases.json`. A change that adds or removes a difference updates both.
 
 ## Testing
 
