@@ -41,16 +41,13 @@ jq computes the result; jqc applies only the changed values to the original text
 brew install muleyuck/tap/jqc
 ```
 
-**Shell script (macOS / Linux)** or **Cargo**: install [jq](https://jqlang.org/download/) separately.
-
-```bash
-curl --proto '=https' --tlsv1.2 -LsSf \
-  https://github.com/muleyuck/jqc/releases/latest/download/jqc-installer.sh | sh
-```
+**Cargo**: install [jq](https://jqlang.org/download/) separately.
 
 ```bash
 cargo install --git https://github.com/muleyuck/jqc
 ```
+
+Prebuilt archives for macOS and Linux are attached to each [release](https://github.com/muleyuck/jqc/releases). The shell installer (`jqc-installer.sh`) was last published with v0.3.0.
 
 Filters, `--edit` and `--in-place` need jq; `fmt` does not.
 

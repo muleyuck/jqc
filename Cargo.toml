@@ -22,7 +22,7 @@ is-terminal = "0.4"
 assert_cmd = "2.2.2"
 predicates = "3.1.4"
 
-# The profile that 'dist' will build with
+# The profile release builds use (.github/workflows/build-release.yml)
 [profile.dist]
 inherits = "release"
 lto = "thin"
