@@ -10,18 +10,12 @@
   "dependencyDashboard": true,
   "minimumReleaseAge": "3 days",
   "internalChecksFilter": "strict",
-  "ignorePaths": [".github/workflows/release.yml", "tests/fixtures/**"],
+  "ignorePaths": ["tests/fixtures/**"],
   "lockFileMaintenance": {
     "enabled": true,
     "schedule": ["on saturday"]
   },
   "customManagers": [
-    {
-      "customType": "regex",
-      "managerFilePatterns": ["/^dist-workspace\\.toml$/"],
-      "matchStrings": ["# renovate: datasource=(?<datasource>.*?) depName=(?<depName>.*?)\\s*\\n\\s*cargo-dist-version\\s*=\\s*\"(?<currentValue>[\\w.-]+)\""],
-      "versioningTemplate": "semver"
-    },
     {
       "customType": "regex",
       "managerFilePatterns": ["/^\\.github/workflows/jq-compat\\.yml$/"],
@@ -43,9 +37,6 @@
     { "matchManagers": ["mise"], "matchDepNames": ["rust"], "matchUpdateTypes": ["major"], "enabled": false },
 
     { "matchManagers": ["mise"], "matchDepNames": ["prek"], "matchUpdateTypes": ["patch", "minor"], "automerge": true },
-
-    { "matchManagers": ["mise", "custom.regex"], "matchDepNames": ["cargo:cargo-dist", "cargo-dist"], "groupName": "cargo-dist" },
-    { "matchManagers": ["mise", "custom.regex"], "matchDepNames": ["cargo:cargo-dist", "cargo-dist"], "matchUpdateTypes": ["patch", "minor"], "automerge": true },
 
     { "matchManagers": ["custom.regex"], "matchDepNames": ["jqlang/jq"], "automerge": false },
 

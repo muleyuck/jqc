@@ -14,7 +14,7 @@ cargo fmt --all
 cargo build && PATH="$PWD/target/debug:$PATH" bash scripts/jq-compat.sh   # jqc vs jq
 ```
 
-- Toolchain and tools are pinned in `mise.toml` (Rust, prek, cargo-dist). Run `mise install` if they are missing.
+- Toolchain and tools are pinned in `mise.toml` (Rust, prek). Run `mise install` if they are missing.
 - The tests and `scripts/jq-compat.sh` need `jq` on `PATH`. CI uses jq 1.8.2 (`JQ_VERSION` in `.github/workflows/jq-compat.yml`).
 - The prek pre-commit hook (`.pre-commit-config.yml`) runs `cargo fmt --check`, `cargo check`, `cargo clippy` and `cargo test` on every commit.
 
@@ -46,5 +46,5 @@ cargo build && PATH="$PWD/target/debug:$PATH" bash scripts/jq-compat.sh   # jqc 
 ## Commits and releases
 
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `build:`, `refactor:`, `test:`, `chore:`; `!` for breaking changes). release-please builds the CHANGELOG and release PRs from them (`release-please-config.json`).
-- Releases are built and published by cargo-dist (`dist-workspace.toml`, generated `.github/workflows/release.yml`). After changing dist config, run `dist generate`, and never edit `release.yml` by hand.
+- Releases: release-please creates the tag and the GitHub release; `.github/workflows/release-please.yml` then builds the four targets (`build-release.yml`, packed by `scripts/package.sh`), attaches the archives, renders the Homebrew formula from `packaging/jqc.rb.in` and pushes it to muleyuck/homebrew-tap with a GitHub App token.
 - PRs are squash-merged into `main`.
