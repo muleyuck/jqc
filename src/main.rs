@@ -99,15 +99,12 @@ fn main() -> ExitCode {
 fn run(args: Vec<String>) -> Result<ExitCode, Failure> {
     match args::parse(args).map_err(fail(2))? {
         Command::Help => {
-            print!("{HELP}");
+            print_out(HELP)?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Version => {
-            println!("jqc {}", env!("CARGO_PKG_VERSION"));
-            println!(
-                "{}",
-                jq::version().unwrap_or_else(|| "jq not found".to_string())
-            );
+            let jq = jq::version().unwrap_or_else(|| "jq not found".to_string());
+            print_out(&format!("jqc {}\n{jq}\n", env!("CARGO_PKG_VERSION")))?;
             Ok(ExitCode::SUCCESS)
         }
         Command::Fmt {
