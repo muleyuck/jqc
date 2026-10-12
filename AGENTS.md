@@ -46,5 +46,5 @@ cargo build && PATH="$PWD/target/debug:$PATH" bash scripts/jq-compat.sh   # jqc 
 ## Commits and releases
 
 - Conventional Commits (`feat:`, `fix:`, `docs:`, `build:`, `refactor:`, `test:`, `chore:`; `!` for breaking changes). release-please builds the CHANGELOG and release PRs from them (`release-please-config.json`).
-- Releases: release-please creates the tag and the GitHub release; `.github/workflows/release-please.yml` then builds the four targets (`build-release.yml`, packed by `scripts/package.sh`), attaches the archives, renders the Homebrew formula from `packaging/jqc.rb.in` and pushes it to muleyuck/homebrew-tap with a GitHub App token.
+- Releases: release-please creates the tag and the GitHub release; `.github/workflows/release-please.yml` then builds the four targets (`build-release.yml`, packed by `scripts/package.sh`), attaches the archives, then renders the Homebrew formula from `packaging/jqc.rb.in` and pushes it to muleyuck/homebrew-tap with muleyuck/github-actions' `actions/homebrew/publish` (GitHub App token in `TAP_APP_CLIENT_ID` / `TAP_APP_PRIVATE_KEY`).
 - PRs are squash-merged into `main`.
