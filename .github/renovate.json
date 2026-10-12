@@ -40,6 +40,6 @@
 
     { "matchManagers": ["custom.regex"], "matchDepNames": ["jqlang/jq"], "automerge": false },
 
-    { "matchUpdateTypes": ["lockFileMaintenance"], "automerge": false }
+    { "matchUpdateTypes": ["lockFileMaintenance"], "automerge": false, "minimumReleaseAge": null }
   ]
 }
