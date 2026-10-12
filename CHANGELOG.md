@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.4.0](https://github.com/muleyuck/jqc/compare/v0.3.0...v0.4.0) (2026-10-12)
+
+
+### ⚠ BREAKING CHANGES
+
+* stop publishing the shell installer and release without cargo-dist ([#90](https://github.com/muleyuck/jqc/issues/90))
+
+### build
+
+* stop publishing the shell installer and release without cargo-dist ([#90](https://github.com/muleyuck/jqc/issues/90)) ([d758120](https://github.com/muleyuck/jqc/commit/d758120787d70815fb45ed3f9866b8a4f1808864))
+
 ## [0.3.0](https://github.com/muleyuck/jqc/compare/v0.2.0...v0.3.0) (2026-10-11)
 
 
