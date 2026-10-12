@@ -61,48 +61,16 @@ jobs:
         run: gh release upload "$TAG_NAME" dist/* --clobber --repo "$GITHUB_REPOSITORY"
 
       # Only after the archives are attached, so the formula never points at a missing file.
-      - name: Render the formula
-        run: |
-          sha() { cut -d ' ' -f 1 "dist/jqc-$1.tar.xz.sha256"; }
-          mkdir -p "$RUNNER_TEMP/Formula"
-          sed -e "s/@VERSION@/${VERSION}/" \
-            -e "s/@SHA256_AARCH64_APPLE_DARWIN@/$(sha aarch64-apple-darwin)/" \
-            -e "s/@SHA256_X86_64_APPLE_DARWIN@/$(sha x86_64-apple-darwin)/" \
-            -e "s/@SHA256_AARCH64_UNKNOWN_LINUX_GNU@/$(sha aarch64-unknown-linux-gnu)/" \
-            -e "s/@SHA256_X86_64_UNKNOWN_LINUX_GNU@/$(sha x86_64-unknown-linux-gnu)/" \
-            packaging/jqc.rb.in > "$RUNNER_TEMP/Formula/jqc.rb"
-          if grep -n '@[A-Z0-9_]*@\|sha256 ""' "$RUNNER_TEMP/Formula/jqc.rb"; then
-            echo "unreplaced value above" >&2
-            exit 1
-          fi
-          brew style "$RUNNER_TEMP/Formula/jqc.rb"
-
-      - name: Get a token for the tap
-        id: tap-token
-        uses: actions/create-github-app-token@bcd2ba49218906704ab6c1aa796996da409d3eb1 # v3.2.0
+      - name: Publish the formula
+        uses: muleyuck/github-actions/actions/homebrew/publish@v1
         with:
+          template: packaging/jqc.rb.in
+          tap-path: Formula/jqc.rb
+          version: ${{ env.VERSION }}
+          sha256: |
+            SHA256_AARCH64_APPLE_DARWIN=dist/jqc-aarch64-apple-darwin.tar.xz
+            SHA256_X86_64_APPLE_DARWIN=dist/jqc-x86_64-apple-darwin.tar.xz
+            SHA256_AARCH64_UNKNOWN_LINUX_GNU=dist/jqc-aarch64-unknown-linux-gnu.tar.xz
+            SHA256_X86_64_UNKNOWN_LINUX_GNU=dist/jqc-x86_64-unknown-linux-gnu.tar.xz
           client-id: ${{ secrets.TAP_APP_CLIENT_ID }}
           private-key: ${{ secrets.TAP_APP_PRIVATE_KEY }}
-          owner: muleyuck
-          repositories: homebrew-tap
-          permission-contents: write
-
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
-        with:
-          repository: muleyuck/homebrew-tap
-          token: ${{ steps.tap-token.outputs.token }}
-          path: tap
-
-      - name: Publish the formula
-        working-directory: tap
-        run: |
-          cp "$RUNNER_TEMP/Formula/jqc.rb" Formula/jqc.rb
-          git add Formula/jqc.rb
-          if git diff --cached --quiet; then
-            echo "Formula already up to date"
-            exit 0
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
-          git commit -m "jqc ${VERSION}"
-          git push
