@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/muleyuck/jqc/compare/v0.4.0...v0.4.1) (2026-10-12)
+
+
+### Bug Fixes
+
+* end --help and --version quietly when stdout is closed ([#92](https://github.com/muleyuck/jqc/issues/92)) ([8fa052d](https://github.com/muleyuck/jqc/commit/8fa052d3c43bdd8f666c267fe2624b9ca56f8ac7))
+
 ## [0.4.0](https://github.com/muleyuck/jqc/compare/v0.3.0...v0.4.0) (2026-10-12)
 
 
