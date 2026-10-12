@@ -1654,6 +1654,27 @@ fn closed_stdout_ends_quietly() {
     }
 }
 
+#[cfg(unix)]
+#[test]
+fn closed_stdout_ends_help_and_version_quietly() {
+    use std::process::{Command as StdCommand, Stdio};
+
+    for arg in ["--help", "--version"] {
+        let (reader, writer) = std::io::pipe().unwrap();
+        // Closed before jqc starts, so its first write fails.
+        drop(reader);
+        let out = StdCommand::new(env!("CARGO_BIN_EXE_jqc"))
+            .arg(arg)
+            .stdout(writer)
+            .stderr(Stdio::piped())
+            .output()
+            .unwrap();
+        let stderr = String::from_utf8_lossy(&out.stderr);
+        assert!(!stderr.contains("panicked"), "{arg}: {stderr}");
+        assert_eq!(out.status.code(), Some(141), "{arg}: {stderr}");
+    }
+}
+
 #[test]
 fn seq_reads_jsonc_records() {
     jqc()
